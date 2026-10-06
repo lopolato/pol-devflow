@@ -1,0 +1,34 @@
+{
+  "id": "auth-chooses-full",
+  "description": "Tarea de permisos sin flag (en --plan-only para acotar coste): el Coordinator debe elegir full, no lite.",
+  "prompt": "/pol-devflow feature --plan-only Solo los administradores pueden borrar usuarios: delete_user en auth.py debe rechazar a quien no tenga rol admin",
+  "fixture": {
+    "files": {
+      ".gitignore": "__pycache__/\n*.pyc\n",
+      "auth.py": "USERS = {\"ana\": {\"role\": \"admin\"}, \"luis\": {\"role\": \"user\"}}\n\n\ndef delete_user(actor, target):\n    \"\"\"Borra un usuario. Cualquiera puede hacerlo hoy.\"\"\"\n    USERS.pop(target, None)\n    return True\n",
+      "test_auth.py": "import unittest\n\nimport auth\n\n\nclass AuthTests(unittest.TestCase):\n    def test_admin_borra(self):\n        auth.USERS[\"tmp\"] = {\"role\": \"user\"}\n        self.assertTrue(auth.delete_user(\"ana\", \"tmp\"))\n        self.assertNotIn(\"tmp\", auth.USERS)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "expectations": [
+    {
+      "type": "transcript_contains_any",
+      "patterns": [
+        "full",
+        "completo"
+      ]
+    },
+    {
+      "type": "no_new_branches"
+    },
+    {
+      "type": "no_new_commits"
+    },
+    {
+      "type": "path_absent",
+      "path": "docs/devflow"
+    },
+    {
+      "type": "no_remote_push"
+    }
+  ]
+}

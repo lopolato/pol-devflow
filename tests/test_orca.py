@@ -175,11 +175,12 @@ class OrcaTests(unittest.TestCase):
                 self.task('implementer', 'app.py', ok=False)
         self.task('implementer', 'app.py')
 
-    def test_native_assignments_stay_sequential(self):
+    def test_native_read_waves_but_sequential_writers(self):
         self.run.pop('executor')
         state.save(self.data, self.run, 'native')
         self.task('explorer')
-        self.task('architect', ok=False)
+        self.task('architect')
+        self.task('implementer', 'app.py', ok=False)
 
     def test_orca_result_requires_matching_settlement_and_identity(self):
         task = self.task('explorer')

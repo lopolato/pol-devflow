@@ -1,6 +1,6 @@
-# Pol DevFlow 1.0.7
+# Pol DevFlow 1.0.8
 
-Skill portable para Codex y Claude Code. El paquete contiene instrucciones, helpers y tests; la instalación es una operación explícita independiente de su creación. La versión 1.0.7 hace la memoria del proyecto optativa por proyecto, aligera lite y limita cleanup al repositorio actual. La 1.0.6 añadió cierre explícito por operación, registro y limpieza de worktrees Orca, borrado remoto optativo con revisión esperada y memoria por áreas para tareas simultáneas. Mantiene el adaptador Orca Build, olas de lectura, Context7 y lite proporcional. Conserva memoria en Git e historial en cleanup; Engram queda fuera.
+Skill portable para Codex y Claude Code. El paquete contiene instrucciones, helpers y tests; la instalación es una operación explícita independiente de su creación. La versión 1.0.8 añade métricas de uso (`stats`), perfil de comandos verificados, olas de lectura también en native, tests afectados durante correcciones y menos llamadas por checkpoint. La 1.0.7 hizo la memoria optativa por proyecto, aligeró lite y limitó cleanup al repositorio actual. Mantiene el adaptador Orca Build, olas de lectura, Context7 y lite proporcional. Conserva memoria en Git e historial en cleanup; Engram queda fuera.
 
 ## Requisitos
 
@@ -8,15 +8,19 @@ Python 3.11+ y Git. La configuración predeterminada usa JSON válido como YAML 
 
 ## Comandos de la skill
 
-`error`, `feature`, `optimize`, `help`, `status`, `config`, `cleanup`. `--plan-only` analiza sin escribir. El CLI Python es soporte determinista, no un agente LLM autónomo. Coordinator permanece en el chat principal y ocho perfiles worker se eligen según necesidad.
+`error`, `feature`, `optimize`, `help`, `status`, `stats`, `config`, `cleanup`. `--plan-only` analiza sin escribir. El CLI Python es soporte determinista, no un agente LLM autónomo. Coordinator permanece en el chat principal y ocho perfiles worker se eligen según necesidad.
 
 ## Modo lite
 
 `error` y `feature` aceptan `--lite` o `--full`; sin flag, el Coordinator propone el nivel. Lite es para cambios claros de hasta 3 archivos de producto, incluidos tests, sin cambios de permisos, migraciones, reglas de negocio relevantes ni concurrencia. Crea una rama nueva en la carpeta actual (sin worktree, así `node_modules` y `.env` siguen disponibles) y delega todo el trabajo en el worker `pol-lite`, que usa el modelo ligero de models.yaml. Si la tarea deja de ser pequeña, pasa a full sobre la misma rama. Optimize siempre es full.
 
+## Estadísticas y perfil del proyecto
+
+`stats [--all] [--since DAYS]` muestra tokens, tiempo y modelos por rol y tipo de tarea, solo con valores que el runtime reportó; lo demás figura como desconocido. El perfil (`_profile`) guarda fuera del repositorio los comandos verificados (test, test_affected, lint, build…) para no redescubrirlos en cada run y marca `stale` cuando cambian dependencias o tooling. `.devflow/project.json` solo se crea si el usuario lo pide.
+
 ## Orca y Context7
 
-Cuando el usuario pide Orca o la sesión Orca está comprobada, leer [adaptador Orca](adapters/orca/README.md) y la guía de su ejecutable. Orca gobierna actividad, Tasks/Dispatches, mensajes y settlement; DevFlow conserva criterios, scopes y evidencia. El puente _orca genera specs y registra link/settle/account, sin lanzar procesos ni autenticar recibos. En full, --executor orca crea rama en el checkout limpio actual, sin worktree adicional. Mantener writers secuenciales; se admiten olas de lectura independientes. Modelos elegidos por usuario o herencia, comprobando selección efectiva.
+Cuando el usuario pide Orca o la sesión Orca está comprobada, leer [adaptador Orca](adapters/orca/README.md) y la guía de su ejecutable. Orca gobierna actividad, Tasks/Dispatches, mensajes y settlement; DevFlow conserva criterios, scopes y evidencia. El puente _orca genera specs y registra link/settle/account, sin lanzar procesos ni autenticar recibos. En full, --executor orca crea rama en el checkout limpio actual, sin worktree adicional. Writers secuenciales y olas de lectura independientes, como en native. Modelos elegidos por usuario o herencia, comprobando selección efectiva.
 
 Antes de completar, registrar resultado y decisión de reutilización/retención/liberación y comprobar el Run real. El helper no reemplaza worker-release. Cleanup no detiene workers: registra propiedad y puede retirar worktrees Orca mediante su runtime después de verificar inactividad, integración y confirmación del alcance. La versión inicial del puente es local; ejecución remota y writers paralelos en worktrees separados quedan pendientes.
 

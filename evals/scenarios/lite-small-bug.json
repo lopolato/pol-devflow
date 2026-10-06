@@ -1,0 +1,53 @@
+{
+  "id": "lite-small-bug",
+  "description": "Bug pequeño y claro con --lite: rama fix/, <=3 archivos de producto, main intacto, sin docs/devflow, tests verdes.",
+  "prompt": "/pol-devflow error --lite El total de calc.total no suma el IVA (IVA = 0.21): total([100]) debería devolver 121.0",
+  "fixture": {
+    "files": {
+      ".gitignore": "__pycache__/\n*.pyc\n",
+      "README.md": "# Tienda\n\nCalculadora de totales. Tests: `python -m unittest`.\n",
+      "calc.py": "IVA = 0.21\n\n\ndef total(prices):\n    \"\"\"Devuelve el total de la lista de precios con IVA incluido.\"\"\"\n    return round(sum(prices), 2)\n",
+      "test_calc.py": "import unittest\n\nfrom calc import total\n\n\nclass TotalTests(unittest.TestCase):\n    def test_total_incluye_iva(self):\n        self.assertEqual(total([100]), 121.0)\n\n    def test_total_vacio(self):\n        self.assertEqual(total([]), 0)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "expectations": [
+    {
+      "type": "branch_created_prefix",
+      "prefix": "fix/"
+    },
+    {
+      "type": "main_unchanged"
+    },
+    {
+      "type": "max_product_files_changed",
+      "max": 3,
+      "branch_prefix": "fix/"
+    },
+    {
+      "type": "path_absent",
+      "path": "docs/devflow"
+    },
+    {
+      "type": "command_passes",
+      "command": [
+        "{python}",
+        "-m",
+        "unittest",
+        "-q"
+      ],
+      "on_branch_prefix": "fix/"
+    },
+    {
+      "type": "worktree_clean"
+    },
+    {
+      "type": "no_remote_push"
+    },
+    {
+      "type": "transcript_contains_any",
+      "patterns": [
+        "lite"
+      ]
+    }
+  ]
+}

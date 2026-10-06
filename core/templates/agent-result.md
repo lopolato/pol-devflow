@@ -7,4 +7,5 @@ observed_revision / result_revision / workspace_dirty:
 criteria_results / findings (nuevos, sin resolver):
 files_inspected / files_changed (confirmados y pendientes) / commits:
 decisions / validation (name, procedure, status, revision, evidence):
-risks / out_of_scope / questions / next_action:
+risks / out_of_scope / questions / next_action (listas vacías y next_action omitibles):
+usage (opcional, solo del runtime): model, tokens, duration_ms, tool_uses, source

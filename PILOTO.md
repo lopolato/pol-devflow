@@ -1,8 +1,8 @@
-# Piloto de Pol DevFlow 1.0.7
+# Piloto de Pol DevFlow 1.0.8
 
 Objetivo: probar la skill con un proyecto real antes de añadir nada más, y decidir qué partes recortar.
 
-Usar un proyecto pequeño y propio, con Git limpio y en main. Abrir una sesión nueva (Claude Code o Codex) para que cargue la 1.0.7.
+Usar un proyecto pequeño y propio, con Git limpio y en main. Abrir una sesión nueva (Claude Code o Codex) para que cargue la 1.0.8.
 
 ## Pasos
 
@@ -18,7 +18,8 @@ Usar un proyecto pequeño y propio, con Git limpio y en main. Abrir una sesión 
 
 - ¿Hizo lo esperado? Si no, qué hizo.
 - Modelos que aparecen en el resumen final (configurado y efectivo).
-- Tiempo aproximado y, si el runtime lo muestra, consumo de tokens.
+- Tiempo y tokens: tras cada tarea, `/pol-devflow stats` muestra lo registrado por rol.
+- Si se guardó el perfil del proyecto (`_profile show`) y si la segunda tarea reutilizó sus comandos sin redescubrirlos.
 - Reglas o pasos que parecieron sobrar o que el Coordinator se saltó.
 - Preguntas que hizo y si eran necesarias.
 
@@ -44,3 +45,5 @@ python scripts/validate.py --runtime codex
 ```
 
 Modelos: `python scripts/devflow.py config set ...` (regenera los agentes; no editarlos a mano).
+
+Evaluaciones de comportamiento (gastan tokens; ver `evals/README.md`): `python evals/run_evals.py --dry-run` para preparar, `--scenario ID` para ejecutar una.

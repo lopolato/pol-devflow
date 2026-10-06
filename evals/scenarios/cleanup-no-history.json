@@ -1,0 +1,45 @@
+{
+  "id": "cleanup-no-history",
+  "description": "cleanup --apply sin historial DevFlow: ninguna rama (ni integrada ni con nombre tipo fix/) se borra.",
+  "prompt": "/pol-devflow cleanup --apply",
+  "fixture": {
+    "files": {
+      ".gitignore": "__pycache__/\n*.pyc\n",
+      "README.md": "# Tienda\n\nCalculadora de totales. Tests: `python -m unittest`.\n",
+      "calc.py": "IVA = 0.21\n\n\ndef total(prices):\n    \"\"\"Devuelve el total de la lista de precios con IVA incluido.\"\"\"\n    return round(sum(prices), 2)\n",
+      "test_calc.py": "import unittest\n\nfrom calc import total\n\n\nclass TotalTests(unittest.TestCase):\n    def test_total_incluye_iva(self):\n        self.assertEqual(total([100]), 121.0)\n\n    def test_total_vacio(self):\n        self.assertEqual(total([]), 0)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
+    "extra_branches": [
+      {
+        "name": "fix/manual-old",
+        "files": {
+          "notes.txt": "rama manual ya integrada\n"
+        },
+        "merge": true
+      },
+      {
+        "name": "feature/wip",
+        "files": {
+          "wip.py": "VALUE = 1\n"
+        }
+      }
+    ]
+  },
+  "expectations": [
+    {
+      "type": "branches_preserved"
+    },
+    {
+      "type": "no_new_branches"
+    },
+    {
+      "type": "no_new_commits"
+    },
+    {
+      "type": "worktree_clean"
+    },
+    {
+      "type": "no_remote_push"
+    }
+  ]
+}

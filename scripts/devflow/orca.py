@@ -16,9 +16,10 @@ def check_assignment(run, role, write_scope):
     active = [t for t in run['tasks'] if t['status'] in ('pending', 'active')]
     if not active:
         return
-    if (run.get('executor', 'native') != 'orca' or role not in READ_ROLES or write_scope
+    # Read-only tasks on the same clean revision may run as a wave (native or Orca); writers stay sequential.
+    if (role not in READ_ROLES or write_scope
             or any(not read_task(t) or t['candidate_revision'] != run['current_revision'] for t in active)):
-        raise DevFlowError('Pending assignments: only independent read-only Orca tasks may share a wave')
+        raise DevFlowError('Pending assignments: only independent read-only tasks may share a wave')
 
 
 def text_fields(value, names):

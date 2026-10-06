@@ -188,6 +188,11 @@ def empty_result(task, worker_id):
 
 
 def validate_result(task, result):
+    if isinstance(result, dict):
+        # Empty lists and next_action may be omitted; files_changed is still checked against Git.
+        for field in LIST_FIELDS:
+            result.setdefault(field, [])
+        result.setdefault('next_action', '')
     if not isinstance(result, dict) or any(field not in result for field in RESULT_FIELDS):
         raise DevFlowError('Incomplete result contract; request missing fields before continuing')
     for field in ('run_id', 'task_id', 'role'):

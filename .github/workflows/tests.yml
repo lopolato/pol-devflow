@@ -1,0 +1,44 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    steps:
+      # Windows runners default to core.autocrlf=true; keep the bytes exactly as committed
+      # so the checkout matches local development (autocrlf=false).
+      - name: Disable line-ending conversion
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Tests set a local identity in their temp repos; this global fallback covers any that do not.
+      - name: Configure git
+        run: |
+          git config --global user.name "pol-devflow CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Validate package
+        run: python scripts/validate.py

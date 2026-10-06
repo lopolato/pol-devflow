@@ -4,12 +4,12 @@ import json
 import sys
 from pathlib import Path
 import uuid
-from . import adapters, cleanup, config, gitops, orca, package, state
+from . import adapters, cleanup, config, gitops, metrics, orca, package, profile, state
 from .storage import DevFlowError, FileLock, atomic_write, data_home, digest, json_bytes, now, package_root, read_json, safe_id
 
 HELP = {
     'general': 'pol-devflow: error | feature [--lite|--full] [--plan-only] <description>; optimize [--plan-only] <description>\n'
-               'help [topic] | status [--run ID] | config [show|validate|set] | cleanup [--apply] [--discard BRANCH] [--purge-history]\n'
+               'help [topic] | status [--run ID] | stats [--all] [--since DAYS] | config [show|validate|set] | cleanup [--apply] [--discard BRANCH] [--purge-history]\n'
                'The skill Coordinator executes workflows through native session tools.\n'
                'The Python CLI provides deterministic support; it is not a standalone LLM agent.',
     'error': 'error [--lite|--full] [--plan-only] <description>: diagnose, fix and verify the reported defect.',
@@ -27,7 +27,12 @@ HELP = {
               '[--model MODEL] [--effort LEVEL] | --inherit\n'
               'Atomic shared config update; generated-file conflicts cause no config write. '
               'Coordinator model belongs to the main session. Changes affect future runs only.',
-    'help': 'help [error|feature|optimize|lite|status|config|cleanup|orca|help]: no repository reads or writes.',
+    'stats': 'stats [--all] [--since DAYS]: recorded tokens/time/models per role and task type for this repository '
+             '(or all with --all). Read-only; values that were not recorded are reported as unknown, never estimated.',
+    'profile': '_profile show | _profile set --input FILE [--repo-file]: verified project commands (setup, test, '
+               'test_affected, lint, typecheck, build, run) reused across runs. Stored outside the repository unless '
+               '--repo-file; reports stale when dependency/tooling files change.',
+    'help': 'help [error|feature|optimize|lite|status|stats|config|cleanup|profile|orca|help]: no repository reads or writes.',
     'orca': 'Orca backend: Coordinator reads adapters/orca/README.md and the version-matched runtime guide. '
             '_run start --executor orca keeps the clean current checkout; _orca spec/link/settle/account '
             'bridge development evidence. Read-only waves only; writers remain sequential. '
@@ -69,6 +74,27 @@ def parser():
     p.add_argument('--base')
     p = commands.add_parser('status')
     p.add_argument('--run')
+    p = commands.add_parser('stats')
+    p.add_argument('--all', action='store_true')
+    p.add_argument('--since', type=int)
+    p = commands.add_parser('_profile')
+    p.add_argument('action', choices=('show', 'set'))
+    p.add_argument('--input')
+    p.add_argument('--repo-file', action='store_true')
+    p = commands.add_parser('_metrics')
+    p.add_argument('action', choices=('add',))
+    p.add_argument('--run')
+    p.add_argument('--lite')
+    p.add_argument('--owner')
+    p.add_argument('--role', required=True, choices=config.ROLES)
+    p.add_argument('--model')
+    p.add_argument('--tokens', type=int)
+    p.add_argument('--duration-ms', type=int)
+    p.add_argument('--tool-uses', type=int)
+    p.add_argument('--source', choices=metrics.SOURCES)
+    p.add_argument('--task-id')
+    p.add_argument('--worker-id')
+    p.add_argument('--phase')
     p = commands.add_parser('config')
     p.add_argument('action', nargs='?', default='show', choices=('show', 'validate', 'set'))
     p.add_argument('--runtime', choices=config.RUNTIMES)
@@ -90,7 +116,8 @@ def parser():
         p.add_argument('--claude-home', default=str(Path.home() / '.claude'))
     p = commands.add_parser('_run')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
-    p.add_argument('action', choices=('start', 'show', 'refresh', 'task', 'record', 'update', 'resolve', 'attempt', 'close', 'claim'))
+    p.add_argument('action', choices=('start', 'show', 'refresh', 'checkpoint', 'task', 'record', 'update', 'resolve',
+                                      'attempt', 'close', 'claim'))
     p.add_argument('--run')
     p.add_argument('--owner')
     p.add_argument('--mode', choices=state.MODES)
@@ -112,6 +139,8 @@ def parser():
     p.add_argument('--failure')
     p.add_argument('--evidence')
     p.add_argument('--workers-confirmed-stopped', action='store_true')
+    p.add_argument('--path', action='append', default=[])
+    p.add_argument('--message')
     p = commands.add_parser('_orca')
     p.add_argument('action', choices=('spec', 'link', 'settle', 'account'))
     p.add_argument('--run', required=True)
@@ -196,6 +225,13 @@ def run_command(args, ctx):
         state.require_owner(run, args.owner)
         if run['status'] != 'active' and args.action != 'close':
             raise DevFlowError('Run is closed; inspect and claim before resuming')
+        if args.action == 'checkpoint':
+            require(args.message)
+            revision = gitops.commit(run['workspace'], args.path, args.message, run['branch'])
+            live = gitops.inspect(run['workspace'])
+            run['current_revision'], run['workspace_dirty'] = live['revision'], live['dirty']
+            state.save(data, run, 'checkpoint')
+            return {'revision': revision, 'workspace_dirty': live['dirty'], 'branch': run['branch']}
         if args.action == 'refresh':
             live = gitops.inspect(run['workspace'])
             if live['branch'] != run['branch']:
@@ -256,6 +292,11 @@ def run_command(args, ctx):
             if task.get('result') is not None:
                 raise DevFlowError('Result already recorded; do not replay an assignment')
             state.validate_result(task, result)
+            usage = None
+            if result.get('usage') is not None:
+                # Optional usage saves a separate _metrics call; it never affects acceptance.
+                usage = metrics.entry({**result['usage'], 'role': task['role'], 'task_id': task['task_id'],
+                                       'worker_id': result['worker_id']})
             if run.get('executor') == 'orca':
                 orca.validate_result(task, result)
             live = gitops.inspect(task['workspace'])
@@ -279,6 +320,8 @@ def run_command(args, ctx):
                 previous['status'] = 'done'
                 previous['superseded_by'] = task['task_id']
             run['current_revision'], run['workspace_dirty'] = candidate, live['dirty']
+            if usage:
+                run.setdefault('metrics', []).append(usage)
             run['validations'].extend(result['validation'])
             run['criteria_results'].extend(result['criteria_results'])
             state.append_findings(run, result['findings'])
@@ -367,6 +410,37 @@ def dispatch(args, ctx):
                 'implementation_started': False}
     if args.command == 'status':
         return state.status(data, run_id=args.run, repository=ctx.repo)
+    if args.command == 'stats':
+        return metrics.stats(data, ctx.repo, args.all, args.since)
+    if args.command == '_profile':
+        if args.action == 'show':
+            if args.input or args.repo_file:
+                raise DevFlowError('_profile show takes no input')
+            return profile.show(data, ctx.repo)
+        require(args.input)
+        return profile.save(data, ctx.repo, read_json(args.input), args.repo_file)
+    if args.command == '_metrics':
+        if bool(args.run) == bool(args.lite):
+            raise DevFlowError('Use exactly one of --run or --lite')
+        value = {'role': args.role, 'model': args.model, 'tokens': args.tokens, 'duration_ms': args.duration_ms,
+                 'tool_uses': args.tool_uses, 'source': args.source, 'task_id': args.task_id,
+                 'worker_id': args.worker_id, 'phase': args.phase}
+        if args.run:
+            require(args.owner)
+            with state.RunLock(data, args.run, args.owner):
+                run = state.load(data, args.run)
+                state.require_owner(run, args.owner)
+                item = metrics.add(run, value)
+                state.save(data, run, 'usage recorded')
+                return item
+        path = data / 'lite' / (safe_id(args.lite) + '.json')
+        with FileLock(path.with_suffix('.lock'), args.owner or 'metrics'):
+            record = read_json(path)
+            if record.get('kind') != 'lite' or (record.get('coordinator_id') and record['coordinator_id'] != args.owner):
+                raise DevFlowError('Lite ownership mismatch; pass the Coordinator --owner used at start')
+            item = metrics.add(record, value)
+            atomic_write(path, json_bytes(record))
+            return item
     if args.command == 'cleanup':
         if args.discard and not args.apply:
             raise DevFlowError('--discard only applies together with --apply')

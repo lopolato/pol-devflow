@@ -16,12 +16,12 @@ Si el usuario fuerza `--lite` y no se cumple una condición, explicar cuál y pr
 
 ## Pasos del Coordinator
 
-1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
+1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. Ejecutar `_profile show`: si existe y no está `stale`, usar sus comandos; si falta o está obsoleto, pol-lite los descubre. No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
 2. Crear la rama en la carpeta actual, sin worktree:
    `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION`
    El helper exige checkout limpio, nunca escribe en main/master y registra la rama para `cleanup`.
-3. Delegar en `pol-lite`: petición, criterios, carpeta, rama, revisión base, scope de producto, comprobaciones y ruta de esta skill. Solo con memoria activada, añadir la ruta del informe y hasta 2 documentos/memoria afectados; sin activación no hay informe ni memoria en el repositorio. El Coordinator no implementa salvo en native si el runtime no tiene workers; entonces avisar de que se usa el modelo de la sesión.
-4. Verificar con Git: rama, commit, archivos cambiados dentro de los límites y checkout limpio. No aceptar `done` sin comprobaciones ejecutadas en el commit final.
+3. Delegar en `pol-lite`: petición, criterios, carpeta, rama, revisión base, scope de producto, comprobaciones (comandos del perfil si existen) y ruta de esta skill. Solo con memoria activada, añadir la ruta del informe y hasta 2 documentos/memoria afectados; sin activación no hay informe ni memoria en el repositorio. El Coordinator no implementa salvo en native si el runtime no tiene workers; entonces avisar de que se usa el modelo de la sesión.
+4. Verificar con Git: rama, commit, archivos cambiados dentro de los límites y checkout limpio. No aceptar `done` sin comprobaciones ejecutadas en el commit final. Guardar en el perfil los comandos que pol-lite ejecutó (`_profile set`) y registrar su uso real con `_metrics add --lite ID --role lite [--owner SESSION]`.
 
 ## Orca
 

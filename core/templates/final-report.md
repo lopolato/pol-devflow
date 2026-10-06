@@ -10,7 +10,7 @@ Revisión de código documentada / cobertura / hechos, inferencias y dudas:
 Criterios y validaciones (incluidos not_run y motivos):
 Entorno preparado / bloqueos de entorno:
 Veredicto de review / identidad y mapeo / revisión inspeccionada:
-Workers utilizados y modelo por rol (configurado / efectivo observado o no verificado); fases hechas por Coordinator con el modelo de la sesión:
+Workers utilizados y modelo por rol (configurado / efectivo observado o no verificado); fases hechas por Coordinator con el modelo de la sesión; uso registrado (tokens/tiempo del runtime o no disponible):
 Backend / IDs Orca y modelo efectivo comprobado o no verificado:
 Settlement / decisión de reutilización, retención o liberación / pendientes de runtime:
 Fuentes técnicas consultadas / versiones / límites:

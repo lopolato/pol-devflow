@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.7)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.8)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -63,3 +63,14 @@ La nueva memoria por áreas es una instrucción compatible con registros antiguo
 - Pendiente: el reemplazo atómico de `state.json` falló de forma intermitente con WinError 5 en dos pasadas intermedias (bloqueo de Windows). No reproducido en la pasada final; corregido con un reintento (ver abajo).
 - Corregido después: `atomic_write` reintenta hasta 6 veces (unos 1,5 s en total) cuando Windows bloquea el destino de forma transitoria (PermissionError, WinError 5/32). Si el bloqueo persiste, falla sin dejar escritura parcial ni temporales. Dos pruebas nuevas en test_storage_retry.py, que fallan contra la versión anterior.
 - El resumen final (full y lite) indica el modelo configurado y el efectivo de cada rol, y qué fases hizo el Coordinator con el modelo de la sesión.
+
+## 1.0.8 · Eficiencia: métricas, perfil, menos llamadas, CI y evaluaciones · 06/10/2026
+
+- Métricas: `usage` opcional en cada resultado (se registra en `_run record`), `_metrics add` para full y lite, y comando público `stats` por rol y tipo de tarea, filtrado por repositorio (`--all`, `--since`). Nunca se estiman valores no registrados.
+- Perfil del proyecto: `_profile show|set` guarda comandos verificados fuera del repositorio (compartidos por sus worktrees) o en `.devflow/project.json` solo con `--repo-file`. Marca `stale` cuando cambian package.json, lockfiles u otros archivos de dependencias o herramientas.
+- Tandas paralelas de tareas de solo lectura también en modo nativo; los writers siguen siendo secuenciales. Tests afectados durante las correcciones y comprobaciones completas una vez sobre la versión final.
+- Menos llamadas: `_run checkpoint` (commit de rutas explícitas + refresh) y resultados sin listas vacías obligatorias; `files_changed` se sigue contrastando con Git.
+- CI en GitHub Actions: Ubuntu y Windows con Python 3.11 y 3.12.
+- Evaluaciones de comportamiento manuales en `evals/` (6 escenarios, sin ejecución automática de LLM).
+- Pruebas nuevas: 8 en test_efficiency.py y 19 en test_evals.py. Comprobación por mutación: sin el filtro por repositorio, `stats` falla su prueba.
+- Pendiente: primera ejecución real de la CI en Linux y de las evaluaciones con un LLM.

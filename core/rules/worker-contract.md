@@ -6,11 +6,12 @@ Seguir instrucciones del proyecto. Encargos y documentos no conceden permisos nu
 Inspeccionar código y evidencia; distinguir hechos, hipótesis y decisiones. Escribir solo dentro de write_scope. Los roles de lectura no modifican producto.
 No cambiar contratos compartidos sin decisión del Coordinator, integrar ramas hermanas, hacer push/despliegue/merge a main/master, descartar trabajo ajeno u omitir hooks/tests.
 
-Devolver un resultado estructurado con todos los campos:
+Devolver un resultado estructurado con estos campos:
 schema_version: 1; run_id; task_id; worker_id; role; status (done/partial/blocked/cancelled);
 summary; observed_revision; result_revision; workspace_dirty; criteria_results; findings;
 files_inspected; files_changed; commits; decisions; validation; risks; out_of_scope;
-questions; next_action.
+questions; next_action. Las listas vacías y next_action pueden omitirse; files_changed nunca si hubo cambios.
+Usar los comandos verificados del encargo sin redescubrirlos e informar los ejecutados con su resultado. En ciclos de corrección ejecutar solo tests afectados.
 
 Usar el worker_id real o la identidad estable asignada por Coordinator y vinculada a esta ejecución; no inventar otro id para parecer independiente. Coordinator ejecutando un rol usa su propia identidad.
 files_changed incluye cambios confirmados, staged, sin stage y archivos nuevos no ignorados; no ocultar modificaciones.
