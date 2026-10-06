@@ -34,6 +34,44 @@ def common_dir(workspace):
     return str((Path(workspace) / git(workspace, 'rev-parse', '--git-common-dir')).resolve())
 
 
+def _config(workspace, key):
+    # git config exits nonzero when the key is unset.
+    try:
+        return git(workspace, 'config', '--get', key).strip() or None
+    except DevFlowError:
+        return None
+
+
+def identity(workspace):
+    """Read-only commit identity preflight, so a rejected push is seen before the first commit."""
+    name, email = _config(workspace, 'user.name'), _config(workspace, 'user.email')
+    remotes = [r for r in git(workspace, 'remote').splitlines() if r.strip()]
+    urls = [_config(workspace, f'remote.{r}.url') or '' for r in remotes]
+    github = any('github.com' in url.lower() for url in urls)
+    noreply = bool(email) and email.lower().endswith('@users.noreply.github.com')
+    warnings = []
+    if not name or not email:
+        warnings.append('Git user.name/user.email is not configured; commits will fail or use an unexpected '
+                        'identity. Configure it or pass --author-name/--author-email to commits.')
+    if github and email and not noreply:
+        warnings.append('GitHub may reject pushes from a private email; use your GitHub noreply address '
+                        '(ID+USER@users.noreply.github.com) or pass --author-name/--author-email to commits.')
+    return {'name': name, 'email': email, 'remotes': remotes, 'github_remote': github, 'noreply': noreply,
+            'warning': ' '.join(warnings) or None}
+
+
+def author_options(name=None, email=None):
+    """Per-command author override; never writes Git config."""
+    if name is None and email is None:
+        return []
+    for value in (name, email):
+        if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
+            raise DevFlowError('--author-name and --author-email go together as nonempty single-line values')
+    if any(c in name + email for c in '<>') or '@' not in email:
+        raise DevFlowError('Invalid author name/email')
+    return ['-c', 'user.name=' + name.strip(), '-c', 'user.email=' + email.strip()]
+
+
 def repository_identity(workspace):
     main = git(workspace, 'worktree', 'list', '--porcelain').splitlines()[0].removeprefix('worktree ')
     return {'repository': str(Path(main).resolve()), 'git_common_dir': common_dir(workspace)}
@@ -59,20 +97,27 @@ def lite_branch(repository, mode, description, base=None):
     """Create a task branch in the current checkout; no worktree, so local dependencies/config keep working."""
     if mode not in ('error', 'feature'):
         raise DevFlowError('Lite supports error and feature only')
-    return task_branch(repository, mode, description, base)
+    return task_branch(repository, mode, description, base, allow_untracked=True)
 
 
-def task_branch(repository, mode, description, base=None):
+def task_branch(repository, mode, description, base=None, allow_untracked=False):
     if mode not in ('error', 'feature', 'optimize'):
         raise DevFlowError('Invalid task mode')
     info = inspect(repository)
-    if info['dirty']:
-        raise DevFlowError('Lite needs a clean checkout; preserve the local changes and use full mode or resolve them first')
     root = info['workspace']
+    untracked = []
+    if info['dirty']:
+        only_untracked = all(line.startswith('?? ') for line in info['status_porcelain'].splitlines() if line)
+        if not (allow_untracked and only_untracked):
+            raise DevFlowError('Lite needs a clean checkout (unrelated untracked files are allowed); preserve the '
+                               'tracked/staged changes and use full mode or resolve them first')
+        # Helpers commit explicit paths only, so these files are never committed.
+        untracked = [p for p in git(root, 'ls-files', '--others', '--exclude-standard', '-z').split('\0') if p]
     start = git(root, 'rev-parse', '--verify', (base + '^{commit}') if base else 'HEAD')
     branch = branch_name(mode, description)
     git(root, 'switch', '-c', branch, start)
-    return inspect(root) | {'base_revision': start, 'previous_branch': info['branch'], 'isolated': False}
+    return inspect(root) | {'base_revision': start, 'previous_branch': info['branch'], 'isolated': False,
+                            'untracked_preserved': untracked}
 
 
 def prepare(repository, mode, description, worktree_root, base=None, existing_branch=None, _parent=None):
@@ -127,7 +172,8 @@ def owned_paths(workspace, paths):
     return result
 
 
-def commit(workspace, paths, message, expected_branch=None):
+def commit(workspace, paths, message, expected_branch=None, author_name=None, author_email=None):
+    author = author_options(author_name, author_email)
     info = check_task_workspace(workspace, expected_branch)
     paths = owned_paths(info['workspace'], paths)
     staged = git(workspace, 'diff', '--cached', '--name-only', '-z')
@@ -144,7 +190,7 @@ def commit(workspace, paths, message, expected_branch=None):
     # CRLF line endings are a project convention, not a whitespace error; markers and real trailing
     # whitespace are still rejected.
     git(workspace, '-c', 'core.whitespace=cr-at-eol', 'diff', '--cached', '--check')
-    git(workspace, 'commit', '-m', message)
+    git(workspace, *author, 'commit', '-m', message)
     return git(workspace, 'rev-parse', 'HEAD')
 
 

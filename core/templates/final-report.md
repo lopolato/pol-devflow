@@ -8,6 +8,7 @@ Cambios:
 Informe versionado (solo con memoria activada) / documentos actualizados o sin impacto y motivo:
 Revisión de código documentada / cobertura / hechos, inferencias y dudas:
 Criterios y validaciones (incluidos not_run y motivos):
+Incidencia reportada (error, aparte del defecto corregido): resuelta | no verificada | causa distinta | aceptada sin verificar (por quién):
 Entorno preparado / bloqueos de entorno:
 Veredicto de review / identidad y mapeo / revisión inspeccionada:
 Workers utilizados y modelo por rol (configurado / efectivo observado o no verificado); fases hechas por Coordinator con el modelo de la sesión; uso registrado (tokens/tiempo del runtime o no disponible):

@@ -1,5 +1,6 @@
 """Public support commands and explicit internal Coordinator operations."""
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -117,7 +118,7 @@ def parser():
     p = commands.add_parser('_run')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
     p.add_argument('action', choices=('start', 'show', 'refresh', 'checkpoint', 'task', 'record', 'update', 'resolve',
-                                      'attempt', 'close', 'claim'))
+                                      'attempt', 'close', 'claim', 'template', 'check-close'))
     p.add_argument('--run')
     p.add_argument('--owner')
     p.add_argument('--mode', choices=state.MODES)
@@ -141,6 +142,10 @@ def parser():
     p.add_argument('--workers-confirmed-stopped', action='store_true')
     p.add_argument('--path', action='append', default=[])
     p.add_argument('--message')
+    p.add_argument('--budget-minutes', type=int)
+    p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--author-name')
+    p.add_argument('--author-email')
     p = commands.add_parser('_orca')
     p.add_argument('action', choices=('spec', 'link', 'settle', 'account'))
     p.add_argument('--run', required=True)
@@ -149,7 +154,7 @@ def parser():
     p.add_argument('--runtime', choices=config.RUNTIMES)
     p.add_argument('--input')
     p = commands.add_parser('_git')
-    p.add_argument('action', choices=('inspect', 'commit', 'child', 'integrate', 'remove-child'))
+    p.add_argument('action', choices=('inspect', 'identity', 'commit', 'child', 'integrate', 'remove-child'))
     p.add_argument('--workspace', required=True)
     p.add_argument('--path', action='append', default=[])
     p.add_argument('--message')
@@ -158,6 +163,8 @@ def parser():
     p.add_argument('--child-workspace')
     p.add_argument('--name')
     p.add_argument('--workers-confirmed-stopped', action='store_true')
+    p.add_argument('--author-name')
+    p.add_argument('--author-email')
     return result
 
 
@@ -166,8 +173,21 @@ def require(*values):
         raise DevFlowError('Required arguments are missing; consult command --help')
 
 
+def close_blockers(run):
+    """Read-only completion gate shared by close and check-close."""
+    live = gitops.inspect(run['workspace'])
+    blockers = []
+    if live['branch'] != run['branch'] or live['revision'] != run['current_revision']:
+        blockers.append('Candidate changed since last handoff; refresh and revalidate')
+    return blockers + state.completion_blockers(run | {'workspace_dirty': live['dirty']})
+
+
 def run_command(args, ctx):
     data, root, repo = Path(ctx.data_dir), Path(ctx.root), Path(ctx.repo)
+    if args.dry_run and args.action != 'record':
+        raise DevFlowError('--dry-run only applies to record')
+    if args.budget_minutes is not None and args.action != 'task':
+        raise DevFlowError('--budget-minutes only applies to task')
     if args.action == 'start':
         require(args.mode, args.request, args.owner, args.runtime)
         if not args.criterion:
@@ -196,11 +216,29 @@ def run_command(args, ctx):
             run['capabilities'].update(executor='orca', parallel_dispatch=True, parallel_writes=False,
                                        runtime_authority='Orca active Dispatch')
         state.save(data, run, 'execution backend selected')
-        return run
+        return run | {'identity': gitops.identity(run['workspace'])}
     require(args.run)
     if args.action == 'show':
         return state.status(data, run_id=args.run)
     require(args.owner)
+    if args.action in ('template', 'check-close'):
+        # Read-only helpers: no lock, no state write.
+        run = state.load(data, args.run)
+        state.require_owner(run, args.owner)
+        if args.action == 'check-close':
+            blockers = close_blockers(run)
+            return {'can_complete': not blockers, 'blockers': blockers}
+        require(args.task_id)
+        task = next((t for t in run['tasks'] if t['task_id'] == args.task_id), None)
+        if not task:
+            raise DevFlowError('No matching assignment for --task-id')
+        template = {'schema_version': 1, 'run_id': run['run_id'], 'task_id': task['task_id'], 'role': task['role'],
+                    'worker_id': '', 'status': 'done', 'summary': '', 'observed_revision': task['candidate_revision'],
+                    'result_revision': None, 'workspace_dirty': False, 'files_changed': []}
+        if task['role'] == 'reviewer':
+            template['review'] = {'verdict': ''}
+        template['usage'] = {'model': None, 'tokens': None, 'duration_ms': None}
+        return template
     with state.RunLock(data, args.run, args.owner):
         run = state.load(data, args.run)
         if args.action == 'claim':
@@ -227,7 +265,8 @@ def run_command(args, ctx):
             raise DevFlowError('Run is closed; inspect and claim before resuming')
         if args.action == 'checkpoint':
             require(args.message)
-            revision = gitops.commit(run['workspace'], args.path, args.message, run['branch'])
+            revision = gitops.commit(run['workspace'], args.path, args.message, run['branch'],
+                                     args.author_name, args.author_email)
             live = gitops.inspect(run['workspace'])
             run['current_revision'], run['workspace_dirty'] = live['revision'], live['dirty']
             state.save(data, run, 'checkpoint')
@@ -256,7 +295,8 @@ def run_command(args, ctx):
                 raise DevFlowError('Replacement cannot change its inherited correction key')
             task = state.make_task(run, args.role, args.objective, args.write_scope,
                                    args.read_scope, args.depends, args.task_id,
-                                   args.correction_key or (known[args.replaces].get('correction_key') if args.replaces else None))
+                                   args.correction_key or (known[args.replaces].get('correction_key') if args.replaces else None),
+                                   args.budget_minutes)
             if args.input:
                 context = read_json(args.input)
                 if (not isinstance(context, dict)
@@ -291,6 +331,7 @@ def run_command(args, ctx):
                 raise DevFlowError('Record role differs from the assigned role')
             if task.get('result') is not None:
                 raise DevFlowError('Result already recorded; do not replay an assignment')
+            # Every validation runs before any mutation, so --dry-run and a real record accept the same results.
             state.validate_result(task, result)
             usage = None
             if result.get('usage') is not None:
@@ -310,10 +351,20 @@ def run_command(args, ctx):
             actual = gitops.changed_paths(task['workspace'], task['candidate_revision'])
             if actual != set(result['files_changed']):
                 raise DevFlowError('Result changed-file list does not match actual committed/uncommitted changes')
+            review = result.get('review')
             if task['role'] == 'reviewer':
                 artifact = task.get('review_diff')
                 if not artifact or digest(Path(artifact['path']).read_bytes()) != artifact['sha256']:
                     raise DevFlowError('Reviewer diff artifact missing/modified; reassign review')
+                if not isinstance(review, dict) or review.get('verdict') not in ('passed', 'changes_required', 'incomplete'):
+                    raise DevFlowError('Reviewer result must include review.verdict (passed, changes_required or incomplete)')
+            state.append_findings({'findings': copy.deepcopy(run['findings'])}, result['findings'])
+            if args.dry_run:
+                return {'valid': True, 'dry_run': True, 'task_id': task['task_id'], 'role': task['role'],
+                        'status': result['status'], 'candidate_revision': candidate,
+                        'workspace_dirty': live['dirty'], 'files_changed': sorted(actual),
+                        'review_verdict': review.get('verdict') if task['role'] == 'reviewer' else None,
+                        'usage_recorded': usage is not None, 'state_changed': False}
             task['status'], task['result'] = result['status'], result
             if result['status'] == 'done' and task.get('replaces'):
                 previous = next(t for t in run['tasks'] if t['task_id'] == task['replaces'])
@@ -328,20 +379,19 @@ def run_command(args, ctx):
             if result['files_changed'] and result['worker_id'] not in run['authors']:
                 run['authors'].append(result['worker_id'])
             if task['role'] == 'reviewer':
-                review = result.get('review')
-                if not review or review.get('verdict') not in ('passed', 'changes_required', 'incomplete'):
-                    raise DevFlowError('Reviewer result must include review.verdict')
                 run['review'] = {'verdict': review['verdict'], 'revision': candidate, 'worker_id': result['worker_id']}
             atomic_write(state.run_dir(data, args.run) / 'results' / (safe_id(result['task_id']) + '.json'), json_bytes(result))
         elif args.action == 'update':
             require(args.input)
             update = read_json(args.input)
             allowed = {'phase', 'criteria_results', 'validations', 'required_checks', 'review_required',
-                       'findings', 'measurement', 'decisions', 'questions', 'next_action', 'workers'}
+                       'findings', 'measurement', 'decisions', 'questions', 'next_action', 'workers', 'incident'}
             if not isinstance(update, dict) or set(update) - allowed:
                 raise DevFlowError('Update contains unsupported fields; snapshots/identity/review cannot be overridden')
             if run.get('executor') == 'orca' and update.get('workers'):
                 raise DevFlowError('Orca owns worker activity; use Dispatch evidence instead of native worker records')
+            if 'incident' in update:
+                state.validate_incident(update['incident'])
             for check in update.get('validations', []):
                 state.validate_check(check)
             for criterion in update.get('criteria_results', []):
@@ -369,6 +419,8 @@ def run_command(args, ctx):
                 if findings[:len(previous)] != previous:
                     raise DevFlowError('Cannot remove/modify findings; use resolve with current validation evidence')
                 state.append_findings(run, findings[len(previous):])
+            if 'incident' in update:
+                state.record_incident(run, update.pop('incident'))
             run.update(update)
         elif args.action == 'resolve':
             require(args.input)
@@ -382,11 +434,10 @@ def run_command(args, ctx):
         elif args.action == 'close':
             require(args.status)
             if args.status == 'completed':
-                live = gitops.inspect(run['workspace'])
-                if live['branch'] != run['branch'] or live['revision'] != run['current_revision']:
-                    raise DevFlowError('Candidate changed since last handoff; refresh and revalidate')
-                run['workspace_dirty'] = live['dirty']
-                state.assert_complete(run)
+                blockers = close_blockers(run)
+                if blockers:
+                    raise DevFlowError('Cannot complete: ' + '; '.join(blockers))
+                run['workspace_dirty'] = False
             run['status'] = args.status
             if args.status == 'cancelled':
                 run['next_action'] = 'Confirm native worker cancellation; preserve all changes and worktrees'
@@ -480,10 +531,11 @@ def dispatch(args, ctx):
                   'previous_branch': info['previous_branch'], 'mode': args.mode, 'request': args.request,
                   'created_at': now()}
         record.update(executor=args.executor, coordinator_id=args.owner, task_id=lite_id,
-                      workspace=info['workspace'], status='pending')
+                      workspace=info['workspace'], status='pending',
+                      untracked_preserved=info.get('untracked_preserved', []))
         # Minimal ownership record so cleanup only ever touches branches DevFlow created.
         atomic_write(data / 'lite' / (lite_id + '.json'), json_bytes(record))
-        return record | {'workspace': info['workspace'],
+        return record | {'workspace': info['workspace'], 'identity': gitops.identity(info['workspace']),
                          'next_action': 'Delegate to pol-lite with this branch; never commit to the previous branch'}
     if args.command == 'config':
         if args.action != 'set' and any((args.runtime, args.role, args.model, args.effort, args.inherit)):
@@ -541,9 +593,12 @@ def dispatch(args, ctx):
     if args.command == '_git':
         if args.action == 'inspect':
             return gitops.inspect(args.workspace)
+        if args.action == 'identity':
+            return gitops.identity(gitops.inspect(args.workspace)['workspace'])
         if args.action == 'commit':
             require(args.message)
-            return {'revision': gitops.commit(args.workspace, args.path, args.message, args.expected_branch)}
+            return {'revision': gitops.commit(args.workspace, args.path, args.message, args.expected_branch,
+                                              args.author_name, args.author_email)}
         if args.action == 'child':
             require(args.name)
             return gitops.child(args.workspace, args.name, data / 'worktrees')

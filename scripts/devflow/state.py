@@ -14,6 +14,7 @@ RESULT_FIELDS = ('schema_version', 'run_id', 'task_id', 'worker_id', 'role', 'st
                  'observed_revision', 'result_revision', 'workspace_dirty', 'criteria_results', 'findings',
                  'files_inspected', 'files_changed', 'commits', 'decisions', 'validation', 'risks',
                  'out_of_scope', 'questions', 'next_action')
+INCIDENT_STATUSES = ('resolved', 'not_verified', 'different_cause', 'accepted_unverified')
 LIST_FIELDS = ('criteria_results', 'findings', 'files_inspected', 'files_changed', 'commits',
                'decisions', 'validation', 'risks', 'out_of_scope', 'questions')
 
@@ -51,7 +52,7 @@ def create(data, repository, mode, request, model_config, branch, revision, crit
            'config_snapshot': copy.deepcopy(config.validate(model_config)), 'capabilities': capabilities or {},
            'tasks': [], 'workers': [], 'authors': [owner], 'validations': [], 'required_checks': [],
            'review_required': False, 'review': None, 'findings': [], 'attempts': {}, 'decisions': [],
-           'questions': [], 'measurement': None, 'next_action': 'Inspect workflow and assign the next task',
+           'questions': [], 'measurement': None, 'incident': None, 'next_action': 'Inspect workflow and assign the next task',
            'events': []}
     save(data, run, 'created')
     return run
@@ -72,9 +73,10 @@ def save(data, run, event):
     folder = run_dir(data, run['run_id'])
     # State is authoritative; context/journal are projections and can be rebuilt on resume.
     atomic_write(folder / 'state.json', json_bytes(run))
-    context = '# DevFlow context\n\n' + '\n'.join(f'{key}: {json.dumps(run[key], ensure_ascii=False)}'
+    context = '# DevFlow context\n\n' + '\n'.join(f'{key}: {json.dumps(run.get(key), ensure_ascii=False)}'
         for key in ('request', 'mode', 'acceptance_criteria', 'workspace', 'branch', 'base_revision',
-                    'current_revision', 'phase', 'status', 'decisions', 'tasks', 'questions', 'next_action'))
+                    'current_revision', 'phase', 'status', 'incident', 'decisions', 'tasks', 'questions',
+                    'next_action'))
     atomic_write(folder / 'context.md', (context + '\n').encode('utf-8'))
     atomic_write(folder / 'events.jsonl', ''.join(json.dumps(e, ensure_ascii=False) + '\n' for e in run['events']).encode('utf-8'))
 
@@ -103,7 +105,8 @@ def status(data, run_id=None, repository=None, verify_git=True):
                     'errors': errors, 'message': 'No unique run; select --run or start a new task'}
         run = candidates[0]
     info = {'run': run, 'worker_activity': 'Recorded state only; live worker activity is not confirmed',
-            'last_recorded_at': run['updated_at'], 'evidence_current': 'not_verified'}
+            'last_recorded_at': run['updated_at'], 'evidence_current': 'not_verified',
+            'overdue_tasks': overdue_tasks(run)}
     if verify_git:
         try:
             from .gitops import inspect
@@ -131,9 +134,54 @@ def status(data, run_id=None, repository=None, verify_git=True):
     return info
 
 
-def make_task(run, role, objective, write_scope, read_scope=None, dependencies=None, task_id=None, correction_key=None):
+def overdue_tasks(run, at=None):
+    """Pending/active assignments past their recorded budget; read-only, never changes the run."""
+    at, result = at or dt.datetime.now(dt.timezone.utc), []
+    for task in run.get('tasks', []):
+        budget = task.get('budget_minutes')
+        if task.get('status') not in ('pending', 'active') or not budget or not task.get('assigned_at'):
+            continue
+        try:
+            elapsed = (at - dt.datetime.fromisoformat(task['assigned_at'])).total_seconds() / 60
+        except (TypeError, ValueError):
+            continue
+        if elapsed > budget:
+            result.append({'task_id': task['task_id'], 'role': task['role'],
+                           'minutes_elapsed': round(elapsed, 1), 'budget_minutes': budget})
+    return result
+
+
+def validate_incident(value):
+    if not isinstance(value, dict) or set(value) - {'symptom', 'status', 'evidence', 'accepted_by'}:
+        raise DevFlowError('Incident accepts only symptom, status, evidence and accepted_by')
+    if value.get('status') not in INCIDENT_STATUSES:
+        raise DevFlowError('Incident status must be one of ' + ', '.join(INCIDENT_STATUSES))
+    for key in ('symptom', 'evidence'):
+        if not isinstance(value.get(key), str) or not value[key].strip():
+            raise DevFlowError(f'Incident needs a nonempty {key}')
+    accepted = value.get('accepted_by')
+    if value['status'] == 'accepted_unverified' and accepted is None:
+        raise DevFlowError('accepted_unverified needs accepted_by (who accepted the unverified incident)')
+    if accepted is not None and (not isinstance(accepted, str) or not accepted.strip()):
+        raise DevFlowError('accepted_by must be a nonempty string')
+    return value
+
+
+def record_incident(run, value):
+    validate_incident(value)
+    if run.get('incident'):
+        # Replaced values stay visible for audit.
+        run.setdefault('incident_history', []).append(run['incident'])
+    run['incident'] = copy.deepcopy(value) | {'recorded_at': now()}
+    return run['incident']
+
+
+def make_task(run, role, objective, write_scope, read_scope=None, dependencies=None, task_id=None, correction_key=None,
+              budget_minutes=None):
     if role not in config.TASK_ROLES or not objective.strip():
         raise DevFlowError('Task needs a worker role and objective')
+    if budget_minutes is not None and (type(budget_minutes) is not int or budget_minutes <= 0):
+        raise DevFlowError('--budget-minutes must be a positive integer')
     for path in write_scope:
         scope_path(run['workspace'], path)
     task_id = task_id or 'task-' + uuid.uuid4().hex[:10]
@@ -152,7 +200,7 @@ def make_task(run, role, objective, write_scope, read_scope=None, dependencies=N
             'write_scope': write_scope, 'shared_contracts': [], 'relevant_context': [],
             'constraints': ['No delegation; deliver to Coordinator; no push or merge main/master'],
             'expected_validation': list(run['required_checks']), 'remaining_fix_cycles': max(0, remaining),
-            'correction_key': correction_key,
+            'correction_key': correction_key, 'assigned_at': now(), 'budget_minutes': budget_minutes,
             'deliver_to': 'coordinator', 'status': 'pending', 'result': None}
 
 
@@ -291,53 +339,86 @@ def record_attempt(run, task_id, failure, evidence):
     history.append({'failure': failure, 'evidence': evidence, 'at': now()})
 
 
-def assert_complete(run):
+def completion_blockers(run):
+    """Every reason the run cannot be completed now (empty list when it can)."""
+    blockers = []
+
+    def valid(check, value):
+        try:
+            check(value)
+        except DevFlowError as exc:
+            blockers.append(str(exc))
+
     if run.get('executor') == 'orca':
         from . import orca
-        orca.assert_complete(run)
+        valid(orca.assert_complete, run)
     revision = run['current_revision']
     if not revision or run.get('workspace_dirty', False):
-        raise DevFlowError('Completion requires an identified clean candidate revision')
+        blockers.append('Completion requires an identified clean candidate revision')
     for criterion in run['acceptance_criteria']:
         items = [c for c in run['criteria_results'] if c.get('criterion') == criterion]
         if not items or items[-1].get('status') != 'passed' or items[-1].get('revision') != revision:
-            raise DevFlowError(f'Acceptance criterion lacks current passing evidence: {criterion}')
-        validate_criterion(items[-1])
-    if any(t.get('status') != 'done' for t in run['tasks']):
-        raise DevFlowError('Some assignments are unfinished')
-    if any(w.get('status') not in ('done', 'cancelled_confirmed') for w in run['workers']):
-        raise DevFlowError('Some workers are still active or their cancellation is unconfirmed')
-    if any(f.get('kind') == 'blocker' and (not f.get('resolved', False)
-           or f.get('resolution', {}).get('revision') != revision) for f in run['findings']):
-        raise DevFlowError('Unresolved review blockers remain')
+            blockers.append(f'Acceptance criterion lacks current passing evidence: {criterion}')
+        else:
+            valid(validate_criterion, items[-1])
+    unfinished = [t for t in run['tasks'] if t.get('status') != 'done']
+    if unfinished:
+        blockers.append('Some assignments are unfinished: ' + ', '.join(
+            f"{t.get('task_id')} ({t.get('role')}, {t.get('status')})" for t in unfinished)
+            + '; record their results or assign a replacement with --replaces')
+    workers = [w for w in run['workers'] if w.get('status') not in ('done', 'cancelled_confirmed')]
+    if workers:
+        blockers.append('Some workers are still active or their cancellation is unconfirmed: ' + ', '.join(
+            f"{w.get('worker_id')} ({w.get('status')})" for w in workers))
+    current = []
     for finding in run['findings']:
-        if finding.get('kind') == 'blocker':
-            resolution = finding.get('resolution') or {}
-            checks = [c for c in run['validations'] if c.get('name') == resolution.get('check')]
-            if not resolution.get('evidence') or not checks or checks[-1].get('status') != 'passed' or checks[-1].get('revision') != revision:
-                raise DevFlowError('Blocker resolution lacks current passing validation')
-            validate_check(checks[-1])
+        if finding.get('kind') != 'blocker':
+            continue
+        if not finding.get('resolved', False) or finding.get('resolution', {}).get('revision') != revision:
+            blockers.append('Unresolved review blockers remain' + (f": {finding['id']}" if finding.get('id') else ''))
+        else:
+            current.append(finding)
+    for finding in current:
+        resolution = finding.get('resolution') or {}
+        checks = [c for c in run['validations'] if c.get('name') == resolution.get('check')]
+        if not resolution.get('evidence') or not checks or checks[-1].get('status') != 'passed' or checks[-1].get('revision') != revision:
+            blockers.append('Blocker resolution lacks current passing validation')
+        else:
+            valid(validate_check, checks[-1])
     for name in run['required_checks']:
         items = [c for c in run['validations'] if c.get('name') == name]
         if not items or items[-1].get('revision') != revision or items[-1].get('status') not in ('passed', 'not_applicable'):
-            raise DevFlowError(f'Required check lacks current evidence: {name}')
-        validate_check(items[-1])
+            blockers.append(f'Required check lacks current evidence: {name}')
+        else:
+            valid(validate_check, items[-1])
     if run['review_required']:
         review = run.get('review') or {}
         if (review.get('verdict') != 'passed' or review.get('revision') != revision
                 or not review.get('worker_id') or review['worker_id'] in run['authors']
                 or review['worker_id'] == run['coordinator_id']):
-            raise DevFlowError('Current independent review is required; preserve as partial if unavailable')
+            blockers.append('Current independent review is required; preserve as partial if unavailable')
     if run['mode'] == 'optimize':
         measurement = run.get('measurement') or {}
+        before, after, direction = measurement.get('before'), measurement.get('after'), measurement.get('direction')
         if not measurement.get('metric') or not measurement.get('procedure') or not measurement.get('evidence'):
-            raise DevFlowError('Optimization lacks objective measurement evidence')
-        before, after = measurement.get('before'), measurement.get('after')
-        if (type(before) not in (int, float) or type(after) not in (int, float)
+            blockers.append('Optimization lacks objective measurement evidence')
+        elif (type(before) not in (int, float) or type(after) not in (int, float)
                 or not math.isfinite(before) or not math.isfinite(after)
                 or measurement.get('after_revision') != revision
                 or not measurement.get('before_revision')):
-            raise DevFlowError('Optimization needs comparable finite measurements tied to revisions')
-        direction = measurement.get('direction')
-        if not ((direction == 'lower' and after < before) or (direction == 'higher' and after > before)):
-            raise DevFlowError('Objective improvement is not demonstrated')
+            blockers.append('Optimization needs comparable finite measurements tied to revisions')
+        elif not ((direction == 'lower' and after < before) or (direction == 'higher' and after > before)):
+            blockers.append('Objective improvement is not demonstrated')
+    if run['mode'] == 'error':
+        incident = run.get('incident') or {}
+        if incident.get('status') not in ('resolved', 'accepted_unverified'):
+            blockers.append('Reported incident not verified as resolved; record incident status resolved with '
+                            'evidence, or accepted_unverified with accepted_by, through _run update '
+                            f"(current: {incident.get('status') or 'missing'})")
+    return blockers
+
+
+def assert_complete(run):
+    blockers = completion_blockers(run)
+    if blockers:
+        raise DevFlowError('; '.join(blockers))

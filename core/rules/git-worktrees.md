@@ -30,6 +30,7 @@ DevFlow puede crear commits locales de su trabajo sin pedir aprobación en cada 
 - No incluir modificaciones preexistentes ni ajenas.
 - Respetar hooks; no omitirlos para forzar un commit.
 - Registrar si el checkpoint está validado o incompleto.
+- Comprobar la identidad (`_git identity --workspace PATH`, o `identity` de `_run start`/`_lite start`) antes del primer commit. Ante `warning` (falta nombre/email o remoto GitHub sin email users.noreply.github.com), usar `--author-name/--author-email` en `_git commit` o `_run checkpoint`, sin cambiar configuración. No reescribir commits tras la review para cambiar identidad salvo petición del usuario; entonces rehacer la evidencia de review para el nuevo SHA.
 
 Crear checkpoints de unidades coherentes y antes de integrarlas. Un commit no acredita que los tests hayan pasado.
 

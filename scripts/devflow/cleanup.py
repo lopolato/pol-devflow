@@ -127,7 +127,7 @@ def _records(data, paths, common):
 
     def entry(branch):
         return items.setdefault(branch, {'branch': branch, 'worktrees': [], 'runs': [], 'lite_records': [],
-                                         'ownership_records': []})
+                                         'ownership_records': [], 'residual': []})
 
     for path in sorted((data / 'lite').glob('*.json')) if (data / 'lite').is_dir() else []:
         record = read_json(path)
@@ -159,11 +159,14 @@ def _records(data, paths, common):
             continue
         # Legacy records without repository identity only match a worktree Git still lists for this repository.
         identified = record.get('repository') or record.get('git_common_dir')
-        if _norm(workspace) in paths or (identified and Path(workspace).exists()
+        # A recorded residual stays listed until it is gone, instead of silently dropping out.
+        if _norm(workspace) in paths or (identified and (Path(workspace).exists() or record.get('residual_path'))
                                          and ours(record.get('repository'), record.get('git_common_dir'))):
             item = entry(record['branch'])
             item['worktrees'].append(workspace)
             item['ownership_records'].append(str(path))
+            if record.get('residual_path'):
+                item['residual'].append(workspace)
     return items
 
 
@@ -172,7 +175,12 @@ def _evaluate(repo, item, target, worktrees, discard, purge_history=False):
     if item.get('orca_lite_unsettled'):
         reasons.append('Orca lite settlement/accounting pending; inspect runtime first')
     sha = _branch_sha(repo, branch)
-    item['exists'] = bool(sha)
+    item['exists'], item['equivalent'] = bool(sha), False
+    recorded = {_norm(w) for w in item['residual']}
+    present = {w for w in recorded if w in worktrees or Path(w).exists()}
+    item['residual'] = [w for w in item['residual'] if _norm(w) in present]
+    for workspace in item['residual']:
+        reasons.append(f'residual folder at {workspace}; inspect/remove manually')
     if branch in PROTECTED or branch == target:
         item.update(action='keep', reasons=['protected branch'])
         return item
@@ -181,13 +189,14 @@ def _evaluate(repo, item, target, worktrees, discard, purge_history=False):
         closed = all(r['status'] in state.FINAL_STATES for r in item['runs'])
         if not closed:
             reasons.append('run still active')
-        if item['worktrees']:
+        if any(_norm(w) not in recorded for w in item['worktrees']):
             reasons.append('worktree registered without its branch; inspect manually')
         if not purge_history:
             reasons.append(HISTORY)
         item.update(merged=None, action='keep' if reasons else 'forget', reasons=reasons)
         return item
     item['merged'] = _is_ancestor(repo, sha, target)
+    item['equivalent'] = not item['merged'] and _equivalent(repo, target, sha)
     if any(r['status'] not in state.FINAL_STATES for r in item['runs']):
         reasons.append('run still active; close it first')
     owned = {_norm(w) for w in item['worktrees']}
@@ -196,6 +205,8 @@ def _evaluate(repo, item, target, worktrees, discard, purge_history=False):
             reasons.append(f'checked out in {path}; switch that checkout to another branch first')
     for workspace in item['worktrees']:
         checked_out = worktrees.get(_norm(workspace))
+        if _norm(workspace) in recorded:
+            continue  # present residuals already block; one removed manually since leaves nothing to inspect
         if checked_out in PROTECTED or checked_out == target:
             reasons.append(f'owned worktree contains protected branch {checked_out}; restore the primary checkout first')
         elif checked_out and checked_out != branch:
@@ -209,9 +220,21 @@ def _evaluate(repo, item, target, worktrees, discard, purge_history=False):
             reasons.append(f'uncommitted changes in worktree {workspace}')
     if not item['merged'] and branch not in discard:
         reasons.append(f'not merged into {target} (if it was squash-merged, confirm and use --discard)')
+        if item['equivalent']:
+            reasons.append(f'content identical to {target} with different SHA (e.g. rewritten author); '
+                           'confirm and use --discard')
     item.update(sha=sha, action='keep' if reasons else 'remove', reasons=reasons,
                 discard=branch in discard and not item['merged'])
     return item
+
+
+def _equivalent(repo, target, sha):
+    """Every branch commit already has a patch-identical commit in target (git cherry '-')."""
+    try:
+        lines = [line for line in gitops.git(repo, 'cherry', target, sha).splitlines() if line.strip()]
+    except DevFlowError:
+        return False
+    return bool(lines) and all(line.startswith('-') for line in lines)
 
 
 def _is_ancestor(repo, sha, target):
@@ -290,7 +313,11 @@ def cleanup(data, repository, apply=False, discard=(), into=None, purge_history=
             if item['runtime_check_required'] and not orca_idle_confirmed:
                 raise DevFlowError('Inspect Orca workers/terminals first; --orca-idle-confirmed records Coordinator confirmation')
             # Recheck ownership and cleanliness just before any deletion.
+            gone = {_norm(w) for w, r in zip(item['worktrees'], item['ownership_records'])
+                    if read_json(r).get('residual_path') and _norm(w) not in _worktrees(repo) and not Path(w).exists()}
             for workspace in item['worktrees']:
+                if _norm(workspace) in gone:
+                    continue
                 fresh = gitops.inspect(workspace)
                 if fresh['dirty'] or fresh['branch'] not in ('', item['branch']):
                     raise DevFlowError('Owned workspace changed since preview/evaluation; nothing removed')
@@ -301,21 +328,34 @@ def cleanup(data, repository, apply=False, discard=(), into=None, purge_history=
             for workspace, record in zip(item['worktrees'], item['ownership_records']):
                 # No --force: Git refuses worktrees with modified or untracked files.
                 ownership = read_json(record)
+                if _norm(workspace) in gone:
+                    ownership['removed_at'] = now()
+                    atomic_write(Path(record), json_bytes(ownership))
+                    continue
                 if ownership.get('backend') == 'orca':
                     if not _orca_workspace(ownership, 'show')['exists']:
                         raise DevFlowError('Orca workspace identity missing before deletion; reconcile first')
-                    try:
-                        _orca_workspace(ownership, 'remove')
-                    except DevFlowError:
-                        # A lost response is not a failed operation: reconcile both authorities.
-                        if _norm(workspace) in _worktrees(repo) or _orca_workspace(ownership, 'show')['exists']:
-                            raise
-                    if _orca_workspace(ownership, 'show')['exists']:
-                        raise DevFlowError('Orca still lists the workspace after removal')
-                else:
-                    gitops.git(repo, 'worktree', 'remove', workspace)
-                if _norm(workspace) in _worktrees(repo) or Path(workspace).exists():
-                    raise DevFlowError('Workspace removal incomplete; residual path preserved for explicit recovery')
+                try:
+                    if ownership.get('backend') == 'orca':
+                        try:
+                            _orca_workspace(ownership, 'remove')
+                        except DevFlowError:
+                            # A lost response is not a failed operation: reconcile both authorities.
+                            if _norm(workspace) in _worktrees(repo) or _orca_workspace(ownership, 'show')['exists']:
+                                raise
+                        if _orca_workspace(ownership, 'show')['exists']:
+                            raise DevFlowError('Orca still lists the workspace after removal')
+                    else:
+                        gitops.git(repo, 'worktree', 'remove', workspace)
+                    if _norm(workspace) in _worktrees(repo) or Path(workspace).exists():
+                        raise DevFlowError('Workspace removal incomplete; residual path preserved for explicit recovery')
+                except DevFlowError as exc:
+                    # Never force-delete: record the leftover so later cleanups keep listing it.
+                    if _norm(workspace) in _worktrees(repo) or Path(workspace).exists():
+                        ownership.update(residual_path=workspace, removal_error=str(exc), residual_at=now())
+                        atomic_write(Path(record), json_bytes(ownership))
+                        item['residual'] = sorted(set(item['residual']) | {workspace})
+                    raise
                 ownership['removed_at'] = now()
                 atomic_write(Path(record), json_bytes(ownership))
             deleted_remote = False
@@ -339,6 +379,7 @@ def cleanup(data, repository, apply=False, discard=(), into=None, purge_history=
                             'deleted_remote_branch': deleted_remote,
                             'removed_worktrees': item['worktrees'], 'discarded_unmerged': item.get('discard', False)})
         except (DevFlowError, OSError) as exc:
-            errors.append({'branch': item['branch'], 'error': str(exc)})
+            errors.append({'branch': item['branch'], 'error': str(exc)}
+                          | ({'residual': item['residual']} if item['residual'] else {}))
     result.update(removed=removed, errors=errors)
     return result

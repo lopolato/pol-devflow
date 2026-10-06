@@ -34,11 +34,11 @@ python scripts/devflow.py --repo PROJECT _run start --mode feature --request DES
 
 En Orca añadir `--executor orca`: usa el checkout existente limpio y crea una rama propia sin worktree adicional. Seleccionar/crear aislamiento por Orca solo si hace falta, y verificar placement. El valor runtime sigue identificando motor, no backend.
 
-Conservar run_id e identidad de sesión. Trabajar en el workspace devuelto. Preparar allí el entorno siguiendo el apartado correspondiente de [Git](rules/git-worktrees.md), comprobar acceso del runtime y una prueba inicial. Si falta entorno, registrar el bloqueo concreto antes de atribuir fallos al producto.
+Conservar run_id e identidad de sesión. Si `identity` del resultado trae `warning`, resolver el autor antes del primer commit según [Git](rules/git-worktrees.md). Trabajar en el workspace devuelto. Preparar allí el entorno siguiendo el apartado correspondiente de [Git](rules/git-worktrees.md), comprobar acceso del runtime y una prueba inicial. Si falta entorno, registrar el bloqueo concreto antes de atribuir fallos al producto.
 
 ## Registrar requisitos y evidencia
 
-`_run update --run ID --owner SESSION_ID --input FILE` lee JSON. Campos: phase, criteria_results, validations, required_checks, review_required, findings, measurement, decisions, questions, next_action, workers. Identidad y snapshots no se pueden sobrescribir.
+`_run update --run ID --owner SESSION_ID --input FILE` lee JSON. Campos: phase, criteria_results, validations, required_checks, review_required, findings, measurement, decisions, questions, next_action, workers e incident (modo error, según su [workflow](workflows/error.md)). Identidad y snapshots no se pueden sobrescribir.
 
 `required_checks` puede ampliarse, pero no reducirse; sus nombres deben ser únicos y no vacíos. `review_required` no puede bajarse una vez fijado. `findings` conserva el prefijo completo de hallazgos existentes y puede añadir nuevos; no permite eliminarlos, editarlos ni resolverlos. El CLI asigna ids a los nuevos hallazgos. Obtener la lista actual antes de actualizarla. Los resultados de workers aportan solo sus hallazgos nuevos.
 
@@ -51,10 +51,10 @@ Registrar workers con identidad, task_id, rol y estado. Para declarar cancelaci�
 Consultar [handoff](rules/handoff.md) y el rol en core/agents.
 
 ```text
-python scripts/devflow.py _run task --run ID --owner SESSION_ID --role implementer --objective OBJECTIVE --write-scope FILE
+python scripts/devflow.py _run task --run ID --owner SESSION_ID --role implementer --objective OBJECTIVE --write-scope FILE --budget-minutes N
 ```
 
-Toda asignación parte de un checkpoint limpio y de la revisión registrada. Un archivo exacto permite ese archivo; una ruta terminada en `/` permite descendientes. Repetir scopes y dependencias según necesidad.
+Toda asignación parte de un checkpoint limpio y de la revisión registrada. Fijar presupuesto y pedir evidencia intermedia concreta; `status` y `_run show` muestran `overdue_tasks`. Si vence el presupuesto o dos comprobaciones no aportan evidencia nueva, reconciliar (lo entregado, Git, logs), detener o sustituir al worker y continuar; no esperar indefinidamente un cierre formal si el diagnóstico útil ya está disponible. Un archivo exacto permite ese archivo; una ruta terminada en `/` permite descendientes. Repetir scopes y dependencias según necesidad.
 
 Fixer exige `--correction-key ISSUE_ID`; una sustitución con `--replaces OLD_TASK_ID` hereda la clave previa. Conservar esa clave para el mismo problema entre workers. `remaining_fix_cycles` refleja el historial de esa clave. No inventar otra clave para renovar el presupuesto.
 
@@ -67,6 +67,8 @@ Todos los workers vuelven al Coordinator. No contactan entre ellos, preguntan al
 ```text
 python scripts/devflow.py _run record --run ID --owner SESSION_ID --input RESULT_FILE
 ```
+
+Partir de `_run template --run ID --owner SESSION_ID --task-id T` (esqueleto para el encargo o para completar) y validar con `record --dry-run` antes de registrar.
 
 Añadir al resultado `usage` {model, tokens, duration_ms, tool_uses, source} con lo que reporte el runtime (p. ej. tokens y duración al completar un subagente Claude Code); record lo guarda. Para fases del Coordinator o datos sueltos: `_metrics add --run ID --owner SESSION_ID --role ROLE [--model M] [--tokens N] [--duration-ms N] [--tool-uses N] [--source runtime|estimate|unavailable] [--task-id T] [--phase P]`.
 
@@ -100,7 +102,7 @@ python scripts/devflow.py _run resolve --run ID --owner SESSION_ID --input RESOL
 
 La operación conserva el hallazgo y el historial; exige Git limpio y validación passing de esa versión. Un blocker resuelto en una versión anterior debe revalidarse y resolverse para la versión final. Repetir review cuando sea obligatoria.
 
-Una sustitución solo da por terminada la tarea previa al recibir el resultado done del reemplazo; conserva ambos resultados. Para optimize registrar métrica, procedimiento, entorno, evidencia, dirección, valores comparables y before_revision/after_revision. Sin evidencia objetiva suficiente, informar partial.
+Una sustitución solo da por terminada la tarea previa al recibir el resultado done del reemplazo; conserva ambos resultados. Un encargo cancelado necesita reemplazo registrado (`--replaces`) o el run cierra partial. Para optimize registrar métrica, procedimiento, entorno, evidencia, dirección, valores comparables y before_revision/after_revision. Sin evidencia objetiva suficiente, informar partial.
 
 ## Integración y continuación
 
@@ -125,9 +127,10 @@ En Orca registrar settlement y accounting mediante el puente, comprobar el Run r
 Antes del cierre, resolver el impacto documental y, con memoria activada, guardar el informe de tarea clasificado según [memoria](rules/project-memory.md); sin activación el resumen va solo al informe final del chat, que puede ofrecer una vez crear la base. Incluir las actualizaciones en los checkpoints y la revisión pertinente antes de declarar completed. Si no hay impacto, registrar el motivo; si falta documentación necesaria, entregar partial. Informar qué base quedó revisada y qué preguntas siguen abiertas.
 
 ```text
+python scripts/devflow.py _run check-close --run ID --owner SESSION_ID
 python scripts/devflow.py _run close --run ID --owner SESSION_ID --status completed
 ```
 
-Requiere candidato limpio, criterios y comprobaciones actuales, tareas/workers terminados, blockers resueltos para esa versión, revisión independiente obligatoria y mejora medida para optimize. El Coordinator se considera potencial autor desde el inicio y no puede aportar la review independiente. El CLI compara identidades declaradas; no autentica workers ni evita una identidad falsa. Coordinator debe comprobar independencia real. Si no puede acreditarla, informar partial o solicitar revisión humana.
+`check-close` enumera todos los bloqueos; resolverlos antes de `close`. Requiere candidato limpio, criterios y comprobaciones actuales, tareas/workers terminados, blockers resueltos para esa versión, revisión independiente obligatoria, incidencia verificada o aceptada en error y mejora medida para optimize. El Coordinator se considera potencial autor desde el inicio y no puede aportar la review independiente. El CLI compara identidades declaradas; no autentica workers ni evita una identidad falsa. Coordinator debe comprobar independencia real. Si no puede acreditarla, informar partial o solicitar revisión humana.
 
 Usar [informe final](templates/final-report.md), con el uso registrado por rol (`usage` o `_metrics add`) para que `stats` lo agregue. Conservar rama y workspace raíz. Solo retirar hijos integrados limpios, propios y con workers detenidos. No hacer push, despliegue o merge a main/master por cerrar una tarea.

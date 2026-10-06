@@ -48,6 +48,8 @@ class CompletionTests(unittest.TestCase):
         self.run['findings'][0]['id'] = 'F1'
         self.run['validations'] = [dict(name='repro', revision='new', status='passed', procedure='repro', evidence='passed')]
         state.resolve_finding(self.run, dict(finding_id='F1', revision='new', evidence='fixed', check='repro'))
+        # Error mode also needs the reported incident verified.
+        state.record_incident(self.run, dict(symptom='query fails', status='resolved', evidence='repro passes'))
         state.assert_complete(self.run)
 
 

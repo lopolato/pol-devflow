@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.9)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.10)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -80,3 +80,16 @@ La nueva memoria por áreas es una instrucción compatible con registros antiguo
 - Detectado por la primera ejecución de la CI en Windows: con `core.autocrlf=false`, `git diff --cached --check` trataba el CR de los finales CRLF como espacio sobrante y el helper de commit rechazaba cualquier archivo CRLF, con un mensaje de error vacío.
 - El commit acepta CRLF (`core.whitespace=cr-at-eol`) y sigue rechazando espacios sobrantes reales y marcadores de conflicto. Los errores de Git muestran stdout cuando stderr está vacío.
 - Prueba nueva en test_gitops.py, que falla contra la 1.0.8. Suite completa con `core.autocrlf=false`: 149 casos, 148 aprobados y 1 omitido.
+
+## 1.0.10 · Correcciones del primer piloto real · 06/10/2026
+
+Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815 pruebas y revisión independiente, pero la ejecución mostró seis carencias de la skill.
+
+- Incidencia frente a defecto: en modo error, `incident` (symptom, status, evidence, accepted_by) separa el síntoma reportado del defecto corregido. `completed` exige `resolved`, o `accepted_unverified` con quién lo aceptó.
+- Workers sin avances: `--budget-minutes` por encargo y `overdue_tasks` en status. Si el worker no aporta evidencia nueva, el Coordinator reconcilia y continúa.
+- Identidad Git: `_git identity` y el aviso en `_run start`/`_lite start` antes del primer commit (remoto GitHub con email no privado o identidad ausente). Autor por comando con `--author-name/--author-email`, sin tocar la configuración.
+- Contratos: `_run template`, `_run record --dry-run` (todas las validaciones antes de cualquier cambio) y `_run check-close` (lista completa de bloqueos). `close` muestra todos los bloqueos a la vez.
+- Cleanup: detecta contenido equivalente con otro SHA (`git cherry`) sin borrarlo automáticamente, y conserva identificadas las carpetas residuales tras un borrado fallido.
+- Lite: se permite con archivos sin seguimiento ajenos a la tarea (`untracked_preserved`); los cambios en archivos con seguimiento siguen exigiendo full.
+- Pruebas: 15 nuevas en test_pilot_fixes.py; 14 fallan contra la 1.0.9 (la otra protege un comportamiento que ya existía). Suite completa: 164 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido.
+- Pendiente: comprobar en el siguiente uso real que el Coordinator registra la incidencia y respeta el presupuesto de los workers.
