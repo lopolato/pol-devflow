@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "coordinator": {
+      "codex": {},
+      "claude": {}
+    },
+    "architect": {
+      "codex": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "claude": {
+        "model": "claude-opus-5-5"
+      }
+    },
+    "explorer": {
+      "codex": {
+        "model": "gpt-6-luna",
+        "effort": "medium"
+      },
+      "claude": {
+        "model": "claude-sonnet-5-5"
+      }
+    },
+    "implementer": {
+      "codex": {
+        "model": "gpt-6-luna",
+        "effort": "high"
+      },
+      "claude": {
+        "model": "claude-sonnet-5-5"
+      }
+    },
+    "debugger": {
+      "codex": {
+        "model": "gpt-6-luna",
+        "effort": "high"
+      },
+      "claude": {
+        "model": "claude-sonnet-5-5"
+      }
+    },
+    "fixer": {
+      "codex": {
+        "model": "gpt-6-luna",
+        "effort": "high"
+      },
+      "claude": {
+        "model": "claude-sonnet-5-5"
+      }
+    },
+    "tester": {
+      "codex": {
+        "model": "gpt-6-luna",
+        "effort": "high"
+      },
+      "claude": {
+        "model": "claude-sonnet-5-5"
+      }
+    },
+    "reviewer": {
+      "codex": {
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "claude": {
+        "model": "claude-opus-5-5"
+      }
+    },
+    "lite": {
+      "codex": {
+        "model": "gpt-6-luna",
+        "effort": "high"
+      },
+      "claude": {
+        "model": "claude-sonnet-5-5"
+      }
+    }
+  }
+}
