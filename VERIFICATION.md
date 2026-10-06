@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.8)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.9)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -74,3 +74,9 @@ La nueva memoria por áreas es una instrucción compatible con registros antiguo
 - Evaluaciones de comportamiento manuales en `evals/` (6 escenarios, sin ejecución automática de LLM).
 - Pruebas nuevas: 8 en test_efficiency.py y 19 en test_evals.py. Comprobación por mutación: sin el filtro por repositorio, `stats` falla su prueba.
 - Pendiente: primera ejecución real de la CI en Linux y de las evaluaciones con un LLM.
+
+## 1.0.9 · Commits con finales de línea CRLF · 06/10/2026
+
+- Detectado por la primera ejecución de la CI en Windows: con `core.autocrlf=false`, `git diff --cached --check` trataba el CR de los finales CRLF como espacio sobrante y el helper de commit rechazaba cualquier archivo CRLF, con un mensaje de error vacío.
+- El commit acepta CRLF (`core.whitespace=cr-at-eol`) y sigue rechazando espacios sobrantes reales y marcadores de conflicto. Los errores de Git muestran stdout cuando stderr está vacío.
+- Prueba nueva en test_gitops.py, que falla contra la 1.0.8. Suite completa con `core.autocrlf=false`: 149 casos, 148 aprobados y 1 omitido.

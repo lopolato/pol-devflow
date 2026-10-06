@@ -13,7 +13,9 @@ def git(workspace, *args):
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise DevFlowError(f'Git unavailable/timeout: {exc}') from exc
     if process.returncode:
-        raise DevFlowError(f'git {args[0]} failed: {process.stderr.strip()}')
+        # Some checks (e.g. diff --check) report on stdout with an empty stderr.
+        detail = process.stderr.strip() or process.stdout.strip()[:2000]
+        raise DevFlowError(f'git {args[0]} failed: {detail}')
     return process.stdout.rstrip('\r\n')
 
 
@@ -139,7 +141,9 @@ def commit(workspace, paths, message, expected_branch=None):
     staged_paths = set(git(workspace, 'diff', '--cached', '--name-only', '-z').split('\0')) - {''}
     if not staged_paths or staged_paths - set(paths):
         raise DevFlowError('Staged diff is empty or contains paths outside the explicit assignment; inspect before continuing')
-    git(workspace, 'diff', '--cached', '--check')
+    # CRLF line endings are a project convention, not a whitespace error; markers and real trailing
+    # whitespace are still rejected.
+    git(workspace, '-c', 'core.whitespace=cr-at-eol', 'diff', '--cached', '--check')
     git(workspace, 'commit', '-m', message)
     return git(workspace, 'rev-parse', 'HEAD')
 

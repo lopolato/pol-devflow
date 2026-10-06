@@ -45,6 +45,21 @@ class GitTests(unittest.TestCase):
             gitops.commit(self.repo, ['new.py'], 'change')
         self.assertEqual(self.git('diff', '--cached', '--name-only'), 'unrelated.py')
 
+    def test_commit_accepts_crlf_but_rejects_real_whitespace_errors(self):
+        self.git('config', 'core.autocrlf', 'false')
+        self.git('switch', '-c', 'fix/crlf')
+        (self.repo / 'windows.txt').write_bytes(b'first\r\nsecond\r\n')
+        revision = gitops.commit(self.repo, ['windows.txt'], 'CRLF file')
+        self.assertEqual(self.git('rev-parse', 'HEAD'), revision)
+        (self.repo / 'bad.txt').write_bytes(b'trailing   \n')
+        with self.assertRaises(storage.DevFlowError) as error:
+            gitops.commit(self.repo, ['bad.txt'], 'whitespace')
+        self.assertIn('trailing whitespace', str(error.exception))
+        (self.repo / 'bad.txt').write_bytes(b'<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n')
+        with self.assertRaises(storage.DevFlowError) as error:
+            gitops.commit(self.repo, ['bad.txt'], 'conflict markers')
+        self.assertIn('conflict marker', str(error.exception))
+
     def test_explicit_commit_and_revision(self):
         self.git('switch', '-c', 'feature/new')
         (self.repo / 'new.py').write_text('x\n')
