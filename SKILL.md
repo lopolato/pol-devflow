@@ -9,10 +9,10 @@ La sesión actual es el Coordinator. Ejecuta el workflow solicitado y elige los 
 
 ## Enrutar la invocación
 
-Aceptar `error|feature [--lite|--full] [--plan-only] <descripción>`, `optimize [--plan-only] <descripción>`, `help [tema]`, `status [--run ID]`, `stats [--all] [--since DAYS]`, `config [show|validate|set ...]` y `cleanup [--into REF] [--remote REMOTO] [--apply] [--discard RAMA] [--purge-history]`. Un comando ausente o desconocido muestra ayuda y no inicia implementación.
+Aceptar `error|feature [--lite|--full] [--review] [--plan-only] <descripción>`, `optimize [--plan-only] <descripción>`, `help [tema]`, `status [--run ID]`, `stats [--all] [--since DAYS]`, `config [show|validate|set ...]` y `cleanup [--into REF] [--remote REMOTO] [--apply] [--discard RAMA] [--purge-history]`. Un comando ausente o desconocido muestra ayuda y no inicia implementación.
 
 - Para help/status/stats/config/cleanup, consultar [comandos](core/commands.md) y ejecutar la operación solicitada.
-- Para error o feature, elegir primero el nivel según [lite](core/workflows/lite.md). En lite, seguir solo ese workflow y delegar en `pol-lite`; no leer el procedimiento completo salvo que se pase a full.
+- Para error o feature, elegir primero el nivel según [lite](core/workflows/lite.md). En lite (o lite+review con `--lite --review`), seguir solo ese workflow y delegar en `pol-lite`; no leer el procedimiento completo salvo que se pase a full.
 - Para desarrollar o planificar en full, consultar el [procedimiento del Coordinator](core/coordinator.md) y el workflow elegido: [error](core/workflows/error.md), [feature](core/workflows/feature.md) u [optimize](core/workflows/optimize.md).
 - Antes de lanzar workers en Orca, leer el [adaptador Orca](adapters/orca/README.md) y cargar la guía de su ejecutable. No sustituirlo por subagentes nativos. Distinguir backend orca de motor codex/claude.
 - Para dudas de librerías/API, aplicar [Context7 y contexto técnico](core/rules/technical-context.md); consultar por necesidad y compartir evidencia pertinente. Engram queda fuera.

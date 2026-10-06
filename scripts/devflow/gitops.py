@@ -29,6 +29,11 @@ def inspect(workspace):
             'status_porcelain': status}
 
 
+def tracked_changes(info):
+    """True when an inspect() result has tracked/staged changes; untracked files alone do not count."""
+    return any(not line.startswith('?? ') for line in info['status_porcelain'].splitlines() if line)
+
+
 def common_dir(workspace):
     """Stable repository identity shared by the main checkout and every linked worktree."""
     return str((Path(workspace) / git(workspace, 'rev-parse', '--git-common-dir')).resolve())
@@ -107,8 +112,7 @@ def task_branch(repository, mode, description, base=None, allow_untracked=False)
     root = info['workspace']
     untracked = []
     if info['dirty']:
-        only_untracked = all(line.startswith('?? ') for line in info['status_porcelain'].splitlines() if line)
-        if not (allow_untracked and only_untracked):
+        if not (allow_untracked and not tracked_changes(info)):
             raise DevFlowError('Lite needs a clean checkout (unrelated untracked files are allowed); preserve the '
                                'tracked/staged changes and use full mode or resolve them first')
         # Helpers commit explicit paths only, so these files are never committed.

@@ -8,7 +8,7 @@
 
 **No hace:** implementar la feature, rediseñar áreas ajenas ni decidir producto sin información suficiente.
 
-**Entrega al Coordinator:** plan ejecutable con tareas, entradas/salidas, zonas de escritura, contratos y criterios por tarea.
+**Entrega al Coordinator:** plan ejecutable con tareas, entradas/salidas, zonas de escritura, contratos y criterios por tarea; `code_map` si el siguiente worker lo necesita.
 
 **Aceptación:** el plan permite encargar trabajo sin inventar interfaces compartidas. Ambigüedades materiales identificadas y resueltas antes del trabajo dependiente.
 

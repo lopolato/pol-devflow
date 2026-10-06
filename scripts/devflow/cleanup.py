@@ -249,7 +249,9 @@ def _forget(data, item, purge_history=False):
     if not purge_history:
         return
     for path in item['lite_records']:
-        Path(inside(Path(path), Path(data) / 'lite')).unlink(missing_ok=True)
+        record = Path(inside(Path(path), Path(data) / 'lite'))
+        record.with_suffix('.review.diff').unlink(missing_ok=True)
+        record.unlink(missing_ok=True)
     for run in item['runs']:
         folder = Path(run['dir'])
         safe_id(folder.name)

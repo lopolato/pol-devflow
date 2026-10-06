@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.11)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.12)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -100,3 +100,10 @@ Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815
 - Los roles que leen código consultan `codegraph_explore` antes de buscar y leer archivo por archivo. DevFlow nunca ejecuta `codegraph init` ni `upgrade`.
 - Durante DevFlow no se activan skills de proceso de otros plugins (superpowers está activo en Claude y Codex); sí las de conocimiento.
 - Pruebas: 2 nuevas en test_codegraph_profile.py. Comprobación real de solo lectura: el proyecto de facturación tiene índice y Git lo ignora.
+
+## 1.0.12 · Menos coste en tareas medianas · 06/10/2026
+
+- Nivel lite+review (`--lite --review`): cambios pequeños que necesitan revisión independiente (permisos, seguridad, reglas de negocio relevantes) ya no pasan a full. Flujo: `_lite review-diff` (diff con hash y autor), un `pol-reviewer` distinto del autor y del Coordinator, `_lite review` con el veredicto y `_lite status` con `review_current`. Una revisión queda obsoleta si cambia la rama; el tercer `changes_required` pasa a full. Migraciones, datos, concurrencia y trabajo amplio siguen yendo a full.
+- `code_map` en los resultados (archivo, función, líneas, motivo; máximo 50) y `_run task --context-from TAREA`, que lo pasa al siguiente worker para que no vuelva a explorar el mismo código.
+- `_lite start` devuelve `session_model_hint`: el Coordinator puede sugerir, una vez y sin bloquear, abrir las sesiones de tareas pequeñas con un modelo ligero.
+- Pruebas: 11 nuevas en test_lite_review.py, que fallan todas contra la 1.0.11. Suite completa: 177 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido.

@@ -4,7 +4,7 @@ Usar `python <skill>/scripts/devflow.py <argumentos>`. `--data-dir <ruta>` fija 
 
 ## help
 
-`help [error|feature|optimize|lite|status|stats|config|cleanup|profile|orca|help]` muestra ayuda sin inspeccionar el repositorio, lanzar workers ni escribir estado.
+`help [error|feature|optimize|lite|status|stats|config|cleanup|profile|orca|help]` muestra ayuda sin inspeccionar el repositorio, lanzar workers ni escribir estado. Las ayudas de error/feature incluyen `error|feature [--lite|--full] [--review] [--plan-only]`: `--review` exige revisión independiente (`--lite --review` = lite+review); optimize no lo admite.
 
 ## status
 

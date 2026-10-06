@@ -8,7 +8,7 @@
 
 **No hace:** refactors, fixes o recomendaciones de mejora sin evidencia suficiente.
 
-**Entrega al Coordinator:** mapa de archivos y símbolos, hallazgos con referencias, dudas y procedimiento/resultados del baseline.
+**Entrega al Coordinator:** `code_map` (ver [handoff](../rules/handoff.md)) con lo que necesita el siguiente worker, hallazgos con referencias, dudas y procedimiento/resultados del baseline.
 
 **Aceptación:** responde a la pregunta o explica qué dato falta y cómo obtenerlo; distingue observaciones de hipótesis.
 

@@ -1,6 +1,6 @@
-# Pol DevFlow 1.0.11
+# Pol DevFlow 1.0.12
 
-Skill portable para Codex y Claude Code. El paquete contiene instrucciones, helpers y tests; la instalación es una operación explícita independiente de su creación. La 1.0.10 separa incidencia reportada de defecto corregido, añade presupuesto por worker (`overdue_tasks`), identidad Git antes del primer commit, `template`/`record --dry-run`/`check-close`, cleanup de contenido equivalente con otro SHA y residuos, y lite con untracked ajenos. La versión 1.0.8 añade métricas de uso (`stats`), perfil de comandos verificados, olas de lectura también en native, tests afectados durante correcciones y menos llamadas por checkpoint. La 1.0.7 hizo la memoria optativa por proyecto, aligeró lite y limitó cleanup al repositorio actual. Mantiene el adaptador Orca Build, olas de lectura, Context7 y lite proporcional. Conserva memoria en Git e historial en cleanup; Engram queda fuera.
+Skill portable para Codex y Claude Code. El paquete contiene instrucciones, helpers y tests; la instalación es una operación explícita independiente de su creación. La 1.0.12 añade el nivel lite+review (`--lite --review`), `code_map` con `--context-from` para no releer código entre workers y la sugerencia de modelo de sesión. La 1.0.11 añade codegraph optativo y aísla DevFlow de las skills de proceso de otros plugins. La 1.0.10 separa incidencia reportada de defecto corregido, añade presupuesto por worker (`overdue_tasks`), identidad Git antes del primer commit, `template`/`record --dry-run`/`check-close`, cleanup de contenido equivalente con otro SHA y residuos, y lite con untracked ajenos. La versión 1.0.8 añade métricas de uso (`stats`), perfil de comandos verificados, olas de lectura también en native, tests afectados durante correcciones y menos llamadas por checkpoint. La 1.0.7 hizo la memoria optativa por proyecto, aligeró lite y limitó cleanup al repositorio actual. Mantiene el adaptador Orca Build, olas de lectura, Context7 y lite proporcional. Conserva memoria en Git e historial en cleanup; Engram queda fuera.
 
 ## Requisitos
 
@@ -12,7 +12,11 @@ Python 3.11+ y Git. La configuración predeterminada usa JSON válido como YAML 
 
 ## Modo lite
 
-`error` y `feature` aceptan `--lite` o `--full`; sin flag, el Coordinator propone el nivel. Lite es para cambios claros de hasta 3 archivos de producto, incluidos tests, sin cambios de permisos, migraciones, reglas de negocio relevantes ni concurrencia. Crea una rama nueva en la carpeta actual (sin worktree, así `node_modules` y `.env` siguen disponibles) y delega todo el trabajo en el worker `pol-lite`, que usa el modelo ligero de models.yaml. Si la tarea deja de ser pequeña, pasa a full sobre la misma rama. Optimize siempre es full.
+`error` y `feature` aceptan `--lite` o `--full`, y `--review`; sin flag de nivel, el Coordinator propone uno. Lite es para cambios claros de hasta 3 archivos de producto, incluidos tests, sin migraciones, datos ni concurrencia. Si además tocan permisos/seguridad o reglas de negocio relevantes, o se pide review, el nivel es lite+review: `pol-reviewer` revisa el diff de la rama lite y no hay `done` sin review vigente. Crea una rama nueva en la carpeta actual (sin worktree, así `node_modules` y `.env` siguen disponibles) y delega todo el trabajo en el worker `pol-lite`, que usa el modelo ligero de models.yaml. Si la tarea deja de ser pequeña, pasa a full sobre la misma rama. Optimize siempre es full.
+
+## Modelo de la sesión
+
+El Coordinator usa el modelo con el que se abrió la sesión y es quien hace más turnos. Para lite y tareas rutinarias conviene un modelo ligero (p. ej. Sonnet en Claude, Luna en Codex); para full complejo, uno fuerte (Opus / gpt-6.1-sol). Los workers usan siempre sus modelos configurados.
 
 ## Estadísticas y perfil del proyecto
 

@@ -3,6 +3,7 @@ import copy
 import datetime as dt
 import json
 import math
+import re
 import uuid
 from pathlib import Path
 from . import config
@@ -15,6 +16,7 @@ RESULT_FIELDS = ('schema_version', 'run_id', 'task_id', 'worker_id', 'role', 'st
                  'files_inspected', 'files_changed', 'commits', 'decisions', 'validation', 'risks',
                  'out_of_scope', 'questions', 'next_action')
 INCIDENT_STATUSES = ('resolved', 'not_verified', 'different_cause', 'accepted_unverified')
+CODE_MAP_LIMIT = 50
 LIST_FIELDS = ('criteria_results', 'findings', 'files_inspected', 'files_changed', 'commits',
                'decisions', 'validation', 'risks', 'out_of_scope', 'questions')
 
@@ -267,7 +269,26 @@ def validate_result(task, result):
             raise DevFlowError('Worker reported an unknown acceptance criterion')
     for finding in result['findings']:
         validate_finding(finding)
+    if 'code_map' in result:
+        validate_code_map(task['workspace'], result['code_map'])
     return result
+
+
+def validate_code_map(workspace, entries):
+    """Optional handoff of where the relevant code lives, so the next worker can skip rediscovery."""
+    if not isinstance(entries, list) or len(entries) > CODE_MAP_LIMIT:
+        raise DevFlowError(f'code_map must be a list of at most {CODE_MAP_LIMIT} entries')
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) - {'path', 'symbol', 'lines', 'why'}:
+            raise DevFlowError('code_map entries accept only path, symbol, lines and why')
+        scope_path(workspace, entry.get('path'))
+        if any(entry.get(k) is not None and not isinstance(entry[k], str) for k in ('symbol', 'lines', 'why')):
+            raise DevFlowError('code_map symbol, lines and why must be strings')
+        lines = entry.get('lines')
+        match = re.fullmatch(r'(\d+)(?:-(\d+))?', lines) if lines is not None else None
+        if lines is not None and (not match or int(match[1]) < 1 or (match[2] and int(match[2]) < int(match[1]))):
+            raise DevFlowError('code_map lines must look like "12" or "10-40"')
+    return entries
 
 
 def validate_finding(finding):

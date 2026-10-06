@@ -8,7 +8,7 @@
 
 **No hace:** presentar una hipótesis como causa confirmada, arreglar problemas ajenos ni ocultar fallos de entorno.
 
-**Entrega al Coordinator:** evidencia intermedia en cuanto exista dentro del presupuesto; al final, reproducción, evidencia, causa confirmada o hipótesis pendiente, si explica el caso reportado, archivos afectados y propuesta para Fixer. Indicar cuándo el diagnóstico ya basta para corregir.
+**Entrega al Coordinator:** evidencia intermedia en cuanto exista dentro del presupuesto; al final, reproducción, evidencia, causa confirmada o hipótesis pendiente, si explica el caso reportado, `code_map` de lo afectado (ver [handoff](../rules/handoff.md)) y propuesta para Fixer. Indicar cuándo el diagnóstico ya basta para corregir.
 
 **Aceptación:** causa apoyada por evidencia o diagnóstico explícitamente parcial con siguiente comprobación concreta.
 

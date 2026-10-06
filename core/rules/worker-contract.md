@@ -9,8 +9,9 @@ No cambiar contratos compartidos sin decisión del Coordinator, integrar ramas h
 Devolver un resultado estructurado con estos campos:
 schema_version: 1; run_id; task_id; worker_id; role; status (done/partial/blocked/cancelled);
 summary; observed_revision; result_revision; workspace_dirty; criteria_results; findings;
-files_inspected; files_changed; commits; decisions; validation; risks; out_of_scope;
+files_inspected; code_map (opcional); files_changed; commits; decisions; validation; risks; out_of_scope;
 questions; next_action. Las listas vacías y next_action pueden omitirse; files_changed nunca si hubo cambios.
+Si relevant_context trae code_map, leer primero esos rangos (con codegraph si hay codegraph.project_path) y ampliar la lectura solo si no basta, indicando por qué en el resultado. Explorer/Debugger entregan code_map con lo que necesita el siguiente worker (máx. 50 entradas).
 Usar los comandos verificados del encargo sin redescubrirlos e informar los ejecutados con su resultado. En ciclos de corrección ejecutar solo tests afectados.
 
 Usar el worker_id real o la identidad estable asignada por Coordinator y vinculada a esta ejecución; no inventar otro id para parecer independiente. Coordinator ejecutando un rol usa su propia identidad.

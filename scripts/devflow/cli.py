@@ -5,18 +5,20 @@ import json
 import sys
 from pathlib import Path
 import uuid
-from . import adapters, cleanup, config, gitops, metrics, orca, package, profile, state
+from . import adapters, cleanup, config, gitops, lite, metrics, orca, package, profile, state
 from .storage import DevFlowError, FileLock, atomic_write, data_home, digest, json_bytes, now, package_root, read_json, safe_id
 
 HELP = {
-    'general': 'pol-devflow: error | feature [--lite|--full] [--plan-only] <description>; optimize [--plan-only] <description>\n'
+    'general': 'pol-devflow: error | feature [--lite|--full] [--review] [--plan-only] <description>; optimize [--plan-only] <description>\n'
                'help [topic] | status [--run ID] | stats [--all] [--since DAYS] | config [show|validate|set] | cleanup [--apply] [--discard BRANCH] [--purge-history]\n'
                'The skill Coordinator executes workflows through native session tools.\n'
                'The Python CLI provides deterministic support; it is not a standalone LLM agent.',
-    'error': 'error [--lite|--full] [--plan-only] <description>: diagnose, fix and verify the reported defect.',
-    'feature': 'feature [--lite|--full] [--plan-only] <description>: implement agreed behavior and verify acceptance criteria.',
+    'error': 'error [--lite|--full] [--review] [--plan-only] <description>: diagnose, fix and verify the reported defect.',
+    'feature': 'feature [--lite|--full] [--review] [--plan-only] <description>: implement agreed behavior and verify acceptance criteria.',
     'lite': 'error|feature --lite <description>: small clear task on a new branch in the current checkout, '
-            'delegated to the pol-lite worker; escalates to full mode when it stops being small.',
+            'delegated to the pol-lite worker; escalates to full mode when it stops being small. '
+            '--lite --review adds one independent review bound to the committed diff '
+            '(_lite review-diff, _lite review, _lite status).',
     'cleanup': 'cleanup [--into REF] [--remote REMOTE] [--apply] [--orca-idle-confirmed] [--discard BRANCH] [--purge-history]: list DevFlow branches, worktrees and closed runs; '
                '--apply removes only merged and clean items after user confirmation; --discard deletes one '
                'unmerged DevFlow branch the user explicitly confirmed. --remote opts into remote deletion; '
@@ -53,6 +55,7 @@ def parser():
             level = p.add_mutually_exclusive_group()
             level.add_argument('--lite', action='store_true')
             level.add_argument('--full', action='store_true')
+        p.add_argument('--review', action='store_true')
         p.add_argument('description', nargs='+')
     p = commands.add_parser('_workspace')
     p.add_argument('action', choices=('register',))
@@ -65,7 +68,7 @@ def parser():
     p.add_argument('--remote')
     p.add_argument('--orca-idle-confirmed', action='store_true')
     p = commands.add_parser('_lite')
-    p.add_argument('action', choices=('start', 'link', 'settle', 'account'))
+    p.add_argument('action', choices=('start', 'link', 'settle', 'account', 'review-diff', 'review', 'status'))
     p.add_argument('--mode', choices=('error', 'feature'))
     p.add_argument('--request')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
@@ -73,6 +76,8 @@ def parser():
     p.add_argument('--lite')
     p.add_argument('--input')
     p.add_argument('--base')
+    p.add_argument('--review', action='store_true')
+    p.add_argument('--author-id')
     p = commands.add_parser('status')
     p.add_argument('--run')
     p = commands.add_parser('stats')
@@ -143,6 +148,7 @@ def parser():
     p.add_argument('--path', action='append', default=[])
     p.add_argument('--message')
     p.add_argument('--budget-minutes', type=int)
+    p.add_argument('--context-from', action='append', default=[])
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--author-name')
     p.add_argument('--author-email')
@@ -188,6 +194,8 @@ def run_command(args, ctx):
         raise DevFlowError('--dry-run only applies to record')
     if args.budget_minutes is not None and args.action != 'task':
         raise DevFlowError('--budget-minutes only applies to task')
+    if getattr(args, 'context_from', None) and args.action != 'task':
+        raise DevFlowError('--context-from only applies to task')
     if args.action == 'start':
         require(args.mode, args.request, args.owner, args.runtime)
         if not args.criterion:
@@ -293,6 +301,10 @@ def run_command(args, ctx):
                 raise DevFlowError('Replacement must reference an unfinished recorded assignment')
             if args.replaces and args.correction_key and args.correction_key != known[args.replaces].get('correction_key'):
                 raise DevFlowError('Replacement cannot change its inherited correction key')
+            sources = list(dict.fromkeys(args.context_from))
+            for source in sources:
+                if source not in known or known[source].get('result') is None:
+                    raise DevFlowError(f'--context-from needs a task with a recorded result: {source}')
             task = state.make_task(run, args.role, args.objective, args.write_scope,
                                    args.read_scope, args.depends, args.task_id,
                                    args.correction_key or (known[args.replaces].get('correction_key') if args.replaces else None),
@@ -305,6 +317,12 @@ def run_command(args, ctx):
                     raise DevFlowError('Task context accepts only shared_contracts/relevant_context/constraints lists')
                 for name, items in context.items():
                     task[name].extend(items)
+            for source in sources:
+                # Hand over the earlier worker's map so the next worker does not rediscover the code.
+                result = known[source]['result']
+                task['relevant_context'].append({'from_task': source, 'role': known[source]['role'],
+                                                 'summary': result.get('summary', ''),
+                                                 'code_map': result.get('code_map') or []})
             safe_id(task['task_id'])
             if args.role == 'reviewer':
                 diff = gitops.git(run['workspace'], 'diff', '--no-ext-diff', '--no-textconv',
@@ -452,9 +470,13 @@ def dispatch(args, ctx):
     if args.command in state.MODES:
         level = 'lite' if getattr(args, 'lite', False) else 'full' if getattr(args, 'full', False) else 'auto'
         if args.command == 'optimize':
+            if args.review:
+                raise DevFlowError('--review applies to error and feature only; optimize always runs the full workflow')
             level = 'full'
+        if level == 'lite' and args.review:
+            level = 'lite+review'
         return {'mode': args.command, 'request': ' '.join(args.description), 'plan_only': args.plan_only,
-                'level': level,
+                'level': level, 'review_requested': args.review,
                 'workflow': str(root / 'core/workflows' / ((args.command if level == 'full' else 'lite') + '.md')),
                 'next_action': 'Coordinator reads workflow, inspects project and resolves material ambiguity; '
                                'plan-only must stop before any state/Git write',
@@ -500,6 +522,26 @@ def dispatch(args, ctx):
     if args.command == '_workspace':
         return cleanup.register_workspace(data, ctx.repo, read_json(args.input))
     if args.command == '_lite':
+        if args.review and args.action != 'start':
+            raise DevFlowError('--review only applies to _lite start')
+        if args.author_id is not None and args.action != 'review-diff':
+            raise DevFlowError('--author-id only applies to _lite review-diff')
+        if args.action == 'status':
+            require(args.lite)
+            return lite.status(read_json(data / 'lite' / (safe_id(args.lite) + '.json')))
+        if args.action in ('review-diff', 'review'):
+            require(args.lite)
+            if args.action == 'review':
+                require(args.input)
+            path = data / 'lite' / (safe_id(args.lite) + '.json')
+            with FileLock(path.with_suffix('.lock'), args.owner or 'lite'):
+                record = read_json(path)
+                if record.get('kind') != 'lite' or (record.get('coordinator_id') and record['coordinator_id'] != args.owner):
+                    raise DevFlowError('Lite ownership mismatch; pass the Coordinator --owner used at start')
+                result = (lite.review_diff(data, record, args.author_id) if args.action == 'review-diff'
+                          else lite.record_review(record, read_json(args.input)))
+                atomic_write(path, json_bytes(record))
+                return result
         if args.action != 'start':
             require(args.lite, args.owner, args.input)
             path = data / 'lite' / (safe_id(args.lite) + '.json')
@@ -531,12 +573,16 @@ def dispatch(args, ctx):
                   'previous_branch': info['previous_branch'], 'mode': args.mode, 'request': args.request,
                   'created_at': now()}
         record.update(executor=args.executor, coordinator_id=args.owner, task_id=lite_id,
-                      workspace=info['workspace'], status='pending',
+                      workspace=info['workspace'], status='pending', review_required=args.review,
                       untracked_preserved=info.get('untracked_preserved', []))
         # Minimal ownership record so cleanup only ever touches branches DevFlow created.
         atomic_write(data / 'lite' / (lite_id + '.json'), json_bytes(record))
+        next_action = 'Delegate to pol-lite with this branch; never commit to the previous branch'
+        if args.review:
+            next_action += ('; after its commits run _lite review-diff and record an independent review '
+                            'with _lite review before reporting')
         return record | {'workspace': info['workspace'], 'identity': gitops.identity(info['workspace']),
-                         'next_action': 'Delegate to pol-lite with this branch; never commit to the previous branch'}
+                         'session_model_hint': lite.SESSION_MODEL_HINT, 'next_action': next_action}
     if args.command == 'config':
         if args.action != 'set' and any((args.runtime, args.role, args.model, args.effort, args.inherit)):
             raise DevFlowError('Model selection flags require config set')

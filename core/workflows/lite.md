@@ -4,24 +4,25 @@ Objetivo: resolver una tarea pequeña y clara (error o feature) con un modelo li
 
 ## Elegir el nivel
 
-`--lite` o `--full` fuerzan el nivel. Sin flag, el Coordinator propone uno y lo justifica en una línea. Lite solo si se cumple todo:
+`--lite` o `--full` fuerzan el nivel; `--review` pide revisión independiente (`--lite --review` = lite+review, `--full --review` = full con review, solo `--review` = nivel automático con review). Sin flag de nivel, el Coordinator propone uno y lo justifica en una línea. Lite solo si se cumple todo:
 
 - el cambio está claro y se sabe qué tocar sin investigación amplia;
 - afecta a 3 archivos de producto (incluidos tests) como máximo;
-- no toca permisos, seguridad, reglas de negocio relevantes, migraciones, datos ni concurrencia;
-- el modo es error o feature (optimize siempre es full);
+- no toca migraciones, datos ni concurrencia, ni es trabajo amplio o de varias áreas;
+- el modo es error o feature (optimize siempre es full y no admite `--review`);
 - el checkout está limpio, salvo archivos sin seguimiento ajenos a la tarea. Con modificaciones de archivos versionados, usar full o preguntar.
 
-Si el usuario fuerza `--lite` y no se cumple una condición, explicar cuál y proponer full; no seguir en lite. Plan-only se detiene antes de crear la rama.
+Si además toca permisos/seguridad o reglas de negocio relevantes, o el usuario/proyecto pide review, el nivel es lite+review; lite sin review no los toca. Si el usuario fuerza `--lite` y no se cumple una condición, explicar cuál y proponer lite+review o full según corresponda; no seguir en lite. Plan-only se detiene antes de crear la rama.
 
 ## Pasos del Coordinator
 
 1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. Ejecutar `_profile show`: si existe y no está `stale`, usar sus comandos; si falta o está obsoleto, pol-lite los descubre. Si devuelve `codegraph`, pasar su `project_path` a pol-lite. No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
 2. Crear la rama en la carpeta actual, sin worktree:
-   `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION`
-   El helper exige checkout limpio salvo untracked, nunca escribe en main/master y registra la rama para `cleanup`. Devuelve `untracked_preserved` e `identity`; si esta trae `warning`, resolver el autor según [Git](../rules/git-worktrees.md).
+   `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION [--review]`
+   El helper exige checkout limpio salvo untracked, nunca escribe en main/master y registra la rama para `cleanup`. Devuelve `untracked_preserved`, `session_model_hint` e `identity`; si esta trae `warning`, resolver el autor según [Git](../rules/git-worktrees.md).
 3. Delegar en `pol-lite`: petición, criterios, carpeta, rama, revisión base, scope de producto, `untracked_preserved` como "no tocar ni confirmar", autor si se resolvió, comprobaciones (comandos del perfil si existen) y ruta de esta skill. Solo con memoria activada, añadir la ruta del informe y hasta 2 documentos/memoria afectados; sin activación no hay informe ni memoria en el repositorio. El Coordinator no implementa salvo en native si el runtime no tiene workers; entonces avisar de que se usa el modelo de la sesión.
 4. Verificar con Git: rama, commit, archivos cambiados dentro de los límites y checkout limpio. No aceptar `done` sin comprobaciones ejecutadas en el commit final. Guardar en el perfil los comandos que pol-lite ejecutó (`_profile set`) y registrar su uso real con `_metrics add --lite ID --role lite [--owner SESSION]`.
+5. Solo lite+review: `_lite review-diff --lite ID --author-id LITE_WORKER_ID` genera el diff con hash. Lanzar `pol-reviewer` (distinto del autor y del Coordinator) con la ruta del diff y los criterios; guardar su JSON {worker_id, verdict passed|changes_required|incomplete, revision, findings} con `_lite review --lite ID --input FILE`. Con changes_required, enviar los blockers aceptados a pol-lite para una corrección con commit y repetir review-diff y review. Si `_lite review` devuelve `escalate` (tercer changes_required), pasar a full. No hay `done` sin `review_current: true` en `_lite status --lite ID`.
 
 ## Orca
 
@@ -42,9 +43,10 @@ DEVFLOW LITE RESULT
 Estado: done | partial | escalated | blocked
 Rama / commit:
 Cambios y comprobaciones (comando y resultado):
+Review (lite+review): veredicto, reviewer y revisión revisada:
 Modelos: pol-lite (configurado / efectivo o no verificado) y Coordinator (modelo de la sesión, solo preflight y verificación):
 Informe en repositorio (solo con memoria activada) / Orca IDs y accounting (si aplica):
 Siguiente paso: revisar y mezclar la rama; después, `cleanup` la retira.
 ```
 
-Context7 solo ante una duda real de API/versión, según [contexto técnico](../rules/technical-context.md). Lite no hace push, merge ni PR, y no sustituye a una revisión independiente: si se exige, usar full.
+Context7 solo ante una duda real de API/versión, según [contexto técnico](../rules/technical-context.md). Lite no hace push, merge ni PR. Sin `--review` no acredita revisión independiente: si se exige, usar lite+review o full. Si `session_model_hint` indica un modelo pesado en la sesión, sugerir una vez en el resumen un modelo ligero para la próxima vez; nunca bloquea ni se repite.
