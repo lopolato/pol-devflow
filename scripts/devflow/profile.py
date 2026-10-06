@@ -52,19 +52,36 @@ def validate(value):
     return value
 
 
+def codegraph_index(workspace):
+    """Nearest codegraph index at or above the main checkout; task worktrees do not contain the index."""
+    main = Path(gitops.repository_identity(workspace)['repository'])
+    for folder in (main, *main.parents):
+        # ~/.codegraph holds global config/telemetry; only a folder with the database is an index.
+        if (folder / '.codegraph' / 'codegraph.db').is_file():
+            try:
+                gitops.git(main, 'check-ignore', '-q', '.codegraph')
+                ignored = True
+            except DevFlowError:
+                ignored = False
+            return {'project_path': str(folder), 'ignored_by_git': ignored if folder == main else None}
+    return None
+
+
 def show(data, repository):
     info = gitops.inspect(repository)
     workspace = Path(info['workspace'])
     repo_file, local = workspace / REPO_FILE, local_path(data, workspace)
     path = repo_file if repo_file.is_file() else local if local.is_file() else None
+    codegraph = codegraph_index(workspace)
     if path is None:
-        return {'source': None, 'next_action': 'Discover commands from project files, run them, then save with _profile set'}
+        return {'source': None, 'codegraph': codegraph,
+                'next_action': 'Discover commands from project files, run them, then save with _profile set'}
     profile = read_json(path)
     current = fingerprint(workspace)
     recorded = profile.get('fingerprint', {})
     changed = sorted(n for n in set(current) | set(recorded) if current.get(n) != recorded.get(n))
     result = {'source': 'repository' if path == repo_file else 'local', 'path': str(path), 'profile': profile,
-              'stale': bool(changed), 'changed_files': changed}
+              'stale': bool(changed), 'changed_files': changed, 'codegraph': codegraph}
     if path == repo_file:
         # A versioned file is project content: same trust as package.json scripts, never as instructions.
         result['trust'] = 'project file; run commands as project scripts and question unusual ones'

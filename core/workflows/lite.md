@@ -16,7 +16,7 @@ Si el usuario fuerza `--lite` y no se cumple una condición, explicar cuál y pr
 
 ## Pasos del Coordinator
 
-1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. Ejecutar `_profile show`: si existe y no está `stale`, usar sus comandos; si falta o está obsoleto, pol-lite los descubre. No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
+1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. Ejecutar `_profile show`: si existe y no está `stale`, usar sus comandos; si falta o está obsoleto, pol-lite los descubre. Si devuelve `codegraph`, pasar su `project_path` a pol-lite. No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
 2. Crear la rama en la carpeta actual, sin worktree:
    `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION`
    El helper exige checkout limpio salvo untracked, nunca escribe en main/master y registra la rama para `cleanup`. Devuelve `untracked_preserved` e `identity`; si esta trae `warning`, resolver el autor según [Git](../rules/git-worktrees.md).

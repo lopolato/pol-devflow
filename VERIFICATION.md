@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.10)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.11)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -93,3 +93,10 @@ Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815
 - Lite: se permite con archivos sin seguimiento ajenos a la tarea (`untracked_preserved`); los cambios en archivos con seguimiento siguen exigiendo full.
 - Pruebas: 15 nuevas en test_pilot_fixes.py; 14 fallan contra la 1.0.9 (la otra protege un comportamiento que ya existía). Suite completa: 164 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido.
 - Pendiente: comprobar en el siguiente uso real que el Coordinator registra la incidencia y respeta el presupuesto de los workers.
+
+## 1.0.11 · codegraph y skills de proceso ajenas · 06/10/2026
+
+- codegraph optativo: `_profile show` devuelve `codegraph` (`project_path`, `ignored_by_git`) cuando el checkout principal o un directorio superior tiene `.codegraph/codegraph.db`. También desde un worktree de tarea, que no contiene el índice. Solo cuenta una carpeta con base de datos: `~/.codegraph` (configuración y telemetría global) no es un índice; lo detectó la primera prueba en esta máquina.
+- Los roles que leen código consultan `codegraph_explore` antes de buscar y leer archivo por archivo. DevFlow nunca ejecuta `codegraph init` ni `upgrade`.
+- Durante DevFlow no se activan skills de proceso de otros plugins (superpowers está activo en Claude y Codex); sí las de conocimiento.
+- Pruebas: 2 nuevas en test_codegraph_profile.py. Comprobación real de solo lectura: el proyecto de facturación tiene índice y Git lo ignora.
