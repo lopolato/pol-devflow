@@ -123,7 +123,7 @@ def parser():
     p = commands.add_parser('_run')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
     p.add_argument('action', choices=('start', 'show', 'refresh', 'checkpoint', 'task', 'record', 'update', 'resolve',
-                                      'attempt', 'close', 'claim', 'template', 'check-close'))
+                                      'attempt', 'close', 'claim', 'template', 'validate-result', 'check-close'))
     p.add_argument('--run')
     p.add_argument('--owner')
     p.add_argument('--mode', choices=state.MODES)
@@ -228,6 +228,24 @@ def run_command(args, ctx):
     require(args.run)
     if args.action == 'show':
         return state.status(data, run_id=args.run)
+    if args.action == 'validate-result':
+        # Worker preflight: schema/assignment only, before Orca settlement. No locks or writes.
+        require(args.input)
+        run = state.load(data, args.run)
+        result = read_json(args.input)
+        task = next((t for t in run['tasks'] if t['task_id'] == result.get('task_id')), None) if isinstance(result, dict) else None
+        if not task:
+            raise DevFlowError('Result task_id must match a recorded assignment')
+        state.validate_result(task, result)
+        if task['role'] == 'reviewer' and (not isinstance(result.get('review'), dict)
+                or result['review'].get('verdict') not in ('passed', 'changes_required', 'incomplete')):
+            raise DevFlowError('review.verdict must be passed, changes_required or incomplete')
+        if result.get('usage') is not None:
+            metrics.entry({**result['usage'], 'role': task['role'], 'task_id': task['task_id'],
+                           'worker_id': result['worker_id']})
+        return {'valid': True, 'scope': 'schema_and_assignment', 'state_changed': False,
+                'task_id': task['task_id'], 'note': 'Not accepted or recorded. Coordinator record --dry-run '
+                'still checks settlement, identity, live Git, reviewer artifact and duplicate findings.'}
     require(args.owner)
     if args.action in ('template', 'check-close'):
         # Read-only helpers: no lock, no state write.
@@ -240,9 +258,7 @@ def run_command(args, ctx):
         task = next((t for t in run['tasks'] if t['task_id'] == args.task_id), None)
         if not task:
             raise DevFlowError('No matching assignment for --task-id')
-        template = {'schema_version': 1, 'run_id': run['run_id'], 'task_id': task['task_id'], 'role': task['role'],
-                    'worker_id': '', 'status': 'done', 'summary': '', 'observed_revision': task['candidate_revision'],
-                    'result_revision': None, 'workspace_dirty': False, 'files_changed': []}
+        template = state.empty_result(task, task.get('orca', {}).get('worker_id', ''))
         if task['role'] == 'reviewer':
             template['review'] = {'verdict': ''}
         template['usage'] = {'model': None, 'tokens': None, 'duration_ms': None}
@@ -384,6 +400,7 @@ def run_command(args, ctx):
                         'review_verdict': review.get('verdict') if task['role'] == 'reviewer' else None,
                         'usage_recorded': usage is not None, 'state_changed': False}
             task['status'], task['result'] = result['status'], result
+            task['result_recorded_at'] = now()
             if result['status'] == 'done' and task.get('replaces'):
                 previous = next(t for t in run['tasks'] if t['task_id'] == task['replaces'])
                 previous['status'] = 'done'
@@ -659,6 +676,10 @@ def dispatch(args, ctx):
 
 
 def main(argv=None):
+    # Console/redirect encoding must not depend on Windows' legacy codepage or PYTHONIOENCODING.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     context = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     context.add_argument('--data-dir', default=str(data_home()))
     context.add_argument('--repo', default=str(Path.cwd()))
@@ -671,7 +692,7 @@ def main(argv=None):
             print(output)
         else:
             print(json.dumps(output, ensure_ascii=False, indent=2))
-        return 0
+        return 2 if args.command == 'cleanup' and args.apply and isinstance(output, dict) and output.get('errors') else 0
     except (DevFlowError, OSError, ValueError, KeyError, TypeError) as exc:
         print(json.dumps({'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2

@@ -6,10 +6,10 @@ from pathlib import Path
 from .storage import DevFlowError, atomic_write, json_bytes, now, read_json, reject_symlink
 
 
-def git(workspace, *args):
+def git(workspace, *args, timeout=120):
     try:
         process = subprocess.run(['git', *args], cwd=workspace, capture_output=True,
-                                 encoding='utf-8', errors='replace', timeout=120)
+                                 encoding='utf-8', errors='replace', timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise DevFlowError(f'Git unavailable/timeout: {exc}') from exc
     if process.returncode:
@@ -170,9 +170,16 @@ def owned_paths(workspace, paths):
         if path.is_absolute() or '..' in path.parts or ':' in value or value.startswith('-') or value in ('.', ''):
             raise DevFlowError('Commit paths must be explicit relative files, without traversal or pathspecs')
         resolved = (root / path).resolve()
-        if not resolved.is_relative_to(root) or resolved.is_dir() or any(c in value for c in '*?['):
+        if not resolved.is_relative_to(root) or resolved.is_dir() or any(c in value for c in '*?'):
             raise DevFlowError('Commit paths cannot be directories, patterns or outside workspace')
-        result.append(path.as_posix())
+        literal = path.as_posix()
+        if not resolved.exists():
+            # Git literal pathspecs still match directory descendants. A deleted directory
+            # must be rejected before staging, while an explicitly deleted file is allowed.
+            tracked = git(root, '--literal-pathspecs', 'ls-files', '-z', '--', literal)
+            if any(name != literal for name in tracked.split('\0') if name):
+                raise DevFlowError('Commit paths must name files, not deleted directories')
+        result.append(literal)
     return result
 
 
@@ -186,7 +193,9 @@ def commit(workspace, paths, message, expected_branch=None, author_name=None, au
         raise DevFlowError('Unrelated paths are already staged; preserve staging and reconcile first')
     if not message.strip():
         raise DevFlowError('Commit message is required')
-    git(workspace, 'add', '--', *paths)
+    # Brackets are literal filenames (e.g. Next.js [action]), not Git patterns.
+    # Set this per command so neither Git config nor ambient glob defaults can expand them.
+    git(workspace, '--literal-pathspecs', 'add', '--', *paths)
     # Verify the exact staged paths, including any path introduced via a rename.
     staged_paths = set(git(workspace, 'diff', '--cached', '--name-only', '-z').split('\0')) - {''}
     if not staged_paths or staged_paths - set(paths):

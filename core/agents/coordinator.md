@@ -18,4 +18,4 @@ Si la memoria del proyecto está activada (optativa por proyecto), la localiza, 
 
 ## Orca y contexto técnico
 
-Cuando se usa Orca, leer adapters/orca/README.md, cargar su guía runtime y usar únicamente su launcher/lifecycle. Mantener DevFlow como evidencia, comprobar Dispatch/identidad/modelo/placement y resolver accounting antes de cerrar. Compartir extractos de Context7 pertinentes, contrastados con versión instalada, mediante los encargos; no instalar MCPs ni añadir Engram.
+Con executor orca, leer adapters/orca/README.md, cargar su guía runtime y usar únicamente su launcher/lifecycle. Mantener DevFlow como evidencia, comprobar Dispatch/identidad/modelo/placement y resolver accounting antes de cerrar. Con executor native, comprobar actividad e identidad mediante la API anfitriona real; la propiedad Orca del workspace no crea autoridad Orca sobre los workers. Compartir extractos de Context7 pertinentes, contrastados con versión instalada, mediante los encargos; no instalar MCPs ni añadir Engram.

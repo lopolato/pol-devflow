@@ -2,7 +2,7 @@
 
 La conversación actual coordina DevFlow. Los workers usan herramientas nativas de la sesión; Python aporta operaciones deterministas. Consultar el workflow seleccionado y las reglas necesarias.
 
-Cuando se solicita Orca o se comprueba una sesión Orca, aplicar primero el [adaptador Orca](../adapters/orca/README.md). Sus reglas de lanzamiento, identidad, espera, settlement y accounting sustituyen las operaciones de actividad nativa de este procedimiento. No usar subagentes nativos ni mantener una segunda lista de actividad. El resto de controles de producto/Git/evidencia continúa vigente.
+Elegir executor antes de iniciar: preferir API nativa disponible en el runtime anfitrión ([Codex](../adapters/codex/README.md) o [Claude](../adapters/claude/README.md)), aunque la sesión esté en Orca. Una petición explícita de workers Orca prevalece; sin API nativa, comprobar Orca en vivo o informar bloqueo. Con executor orca, el [adaptador Orca](../adapters/orca/README.md) sustituye lanzamiento, identidad, espera, settlement y accounting nativos. Mantener una sola autoridad de actividad por run; no cambiarla silenciosamente durante su ejecución. Orca sigue gestionando sus workspaces/terminales cuando los workers son nativos, sin crear Tasks/Dispatches Orca para ellos.
 
 ## Preflight y planificación
 
@@ -27,12 +27,12 @@ Consultar [Git](rules/git-worktrees.md) y [estado](rules/context-sharing.md). Re
 Desde la carpeta de la skill, con rutas absolutas y argumentos citados:
 
 ```text
-python scripts/devflow.py --repo PROJECT _run start --mode feature --request DESCRIPTION --criterion CRITERION --runtime RUNTIME --owner SESSION_ID
+python scripts/devflow.py --repo PROJECT _run start --mode feature --request DESCRIPTION --criterion CRITERION --runtime RUNTIME --executor EXECUTOR --owner SESSION_ID
 ```
 
-`RUNTIME` es obligatorio: `codex` o `claude`, según la sesión actual. Repetir `--criterion` por criterio. `--base REF` fija otra base. `--reuse-branch BRANCH` reutiliza únicamente una rama propia actualmente abierta y limpia; nunca main/master. El helper crea una carpeta corta `wt-<id>` para el worktree y registra la selección de modelos en un snapshot.
+`RUNTIME` es obligatorio: `codex` o `claude`, según la sesión actual. `EXECUTOR` es `native` u `orca`, elegido por capacidad real y petición del usuario; disponer del otro CLI no prueba su API de subagentes. Repetir `--criterion` por criterio. `--base REF` fija otra base. `--reuse-branch BRANCH` reutiliza únicamente una rama propia actualmente abierta y limpia; nunca main/master. El helper crea una carpeta corta `wt-<id>` para el worktree y registra la selección de modelos en un snapshot.
 
-En Orca añadir `--executor orca`: usa el checkout existente limpio y crea una rama propia sin worktree adicional. Seleccionar/crear aislamiento por Orca solo si hace falta, y verificar placement. El valor runtime sigue identificando motor, no backend.
+Con executor orca, `--executor orca` usa el checkout existente limpio y crea una rama propia sin worktree adicional. Seleccionar/crear aislamiento por Orca solo si hace falta, y verificar placement. La propiedad Orca del workspace es independiente del executor: registrar los workspaces propios gestionados y usar Orca para su ciclo de vida incluso con workers nativos; no duplicar creación/retirada con Git. Para native en una rama de tarea Orca existente y limpia, usar `--executor native --reuse-branch TASK_BRANCH` desde ese checkout comprobado. Sin reutilización, el helper native crea su propio worktree no gestionado por Orca; eso no transforma ni retira el workspace Orca previo.
 
 Conservar run_id e identidad de sesión. Si `identity` del resultado trae `warning`, resolver el autor antes del primer commit según [Git](rules/git-worktrees.md). Trabajar en el workspace devuelto. Preparar allí el entorno siguiendo el apartado correspondiente de [Git](rules/git-worktrees.md), comprobar acceso del runtime y una prueba inicial. Si falta entorno, registrar el bloqueo concreto antes de atribuir fallos al producto.
 
@@ -54,7 +54,7 @@ Consultar [handoff](rules/handoff.md) y el rol en core/agents.
 python scripts/devflow.py _run task --run ID --owner SESSION_ID --role implementer --objective OBJECTIVE --write-scope FILE --budget-minutes N
 ```
 
-Toda asignación parte de un checkpoint limpio y de la revisión registrada. Fijar presupuesto y pedir evidencia intermedia concreta; `status` y `_run show` muestran `overdue_tasks`. Si vence el presupuesto o dos comprobaciones no aportan evidencia nueva, reconciliar (lo entregado, Git, logs), detener o sustituir al worker y continuar; no esperar indefinidamente un cierre formal si el diagnóstico útil ya está disponible. Un archivo exacto permite ese archivo; una ruta terminada en `/` permite descendientes. Repetir scopes y dependencias según necesidad.
+Toda asignación parte de un checkpoint limpio y de la revisión registrada. Fijar presupuesto y pedir evidencia intermedia concreta; `status` y `_run show` muestran `overdue_tasks`. Si vence el presupuesto o dos comprobaciones no aportan evidencia nueva, reconciliar entrega, Git, logs y actividad; informar al usuario qué se sabe y replantear alcance o espera. El vencimiento no acredita fallo ni autoriza matar, relanzar o sustituir un worker incierto; para hacerlo se necesita la prueba y recuperación del backend. No repetir esperas ciegas ni inventar tokens o tiempo de trabajo a partir del tiempo transcurrido. Un archivo exacto permite ese archivo; una ruta terminada en `/` permite descendientes. Repetir scopes y dependencias según necesidad.
 
 Fixer exige `--correction-key ISSUE_ID`; una sustitución con `--replaces OLD_TASK_ID` hereda la clave previa. Conservar esa clave para el mismo problema entre workers. `remaining_fix_cycles` refleja el historial de esa clave. No inventar otra clave para renovar el presupuesto.
 
@@ -68,7 +68,7 @@ Todos los workers vuelven al Coordinator. No contactan entre ellos, preguntan al
 python scripts/devflow.py _run record --run ID --owner SESSION_ID --input RESULT_FILE
 ```
 
-Partir de `_run template --run ID --owner SESSION_ID --task-id T` (esqueleto para el encargo o para completar) y validar con `record --dry-run` antes de registrar.
+Partir de `_run template --run ID --owner SESSION_ID --task-id T` (esqueleto para el encargo o para completar). Antes de enviar, el worker usa `_run validate-result --run ID --input RESULT_FILE`: comprueba formato y asignación sin escribir estado ni exigir settlement. Si el rol no puede guardar un informe, entrega el JSON y Coordinator realiza esa prevalidación. Después de reconciliar Git y settlement, usar `record --dry-run` y registrar; la prevalidación no acepta la entrega ni prueba Git, independencia o actividad.
 
 Añadir al resultado `usage` {model, tokens, duration_ms, tool_uses, source} con lo que reporte el runtime (p. ej. tokens y duración al completar un subagente Claude Code); record lo guarda. Para fases del Coordinator o datos sueltos: `_metrics add --run ID --owner SESSION_ID --role ROLE [--model M] [--tokens N] [--duration-ms N] [--tool-uses N] [--source runtime|estimate|unavailable] [--task-id T] [--phase P]`.
 
@@ -92,7 +92,7 @@ Consultar [validación](rules/definition-of-done.md) y [recuperación](rules/rec
 python scripts/devflow.py _run attempt --run ID --owner SESSION_ID --task-id ISSUE_ID --failure DESCRIPTION --evidence NEW_EVIDENCE
 ```
 
-Aquí ISSUE_ID es la misma correction_key del fixer; `integration` identifica ciclos de integración. Los intentos registrados cuentan ciclos ejecutados, no reservas: registrar su resultado antes de asignar otra corrección permite tres ciclos y bloquea el cuarto. En los ciclos ejecutar solo tests afectados (`test_affected` o dirigidos); las comprobaciones completas, una vez sobre el candidato final. Corregir únicamente blockers aceptados y fallos de la tarea. Las sugerencias van al informe final. Detenerse si se repite el fallo sin nueva evidencia.
+Aquí ISSUE_ID es la misma correction_key del fixer; `integration` identifica ciclos de integración. Los intentos registrados cuentan ciclos ejecutados, no reservas: registrar su resultado antes de asignar otra corrección permite tres ciclos y bloquea el cuarto. En los ciclos ejecutar solo tests afectados (`test_affected` o dirigidos). Cuando la review sea obligatoria, priorizar review de corrección y pruebas dirigidas del candidato limpio; pueden formar una ola independiente. Tras aceptar y verificar los fixes, ejecutar las comprobaciones completas y las costosas (build/Docker si corresponden) sobre el candidato final aprobado. No omitir checks obligatorios; repetir solo los afectados por cambios o nueva evidencia. Corregir únicamente blockers aceptados y fallos de la tarea. Las sugerencias van al informe final. Detenerse si se repite el fallo sin nueva evidencia.
 
 Tras corregir, validar la revisión candidata limpia. Para resolver un hallazgo, guardar JSON con finding_id, revision, evidence y check (nombre de una validación passed actual), y ejecutar:
 
@@ -106,7 +106,7 @@ Una sustitución solo da por terminada la tarea previa al recibir el resultado d
 
 ## Integración y continuación
 
-Las escrituras e integraciones son secuenciales; las lecturas independientes pueden ir en olas. En native, `_git child` crea un hijo desde una raíz limpia; preparar también su entorno. `_git integrate` integra localmente. En Orca no duplicar creación/retirada de worktrees por otro sistema. Resolver conflictos técnicos según contratos; preguntar por elecciones funcionales. No elegir ours/theirs automáticamente. Validar la revisión integrada.
+Las escrituras e integraciones son secuenciales; las lecturas independientes pueden ir en olas. Para worktrees no gestionados por Orca, `_git child` crea un hijo desde una raíz limpia; preparar también su entorno. `_git integrate` integra localmente. Los workspaces gestionados por Orca conservan su ciclo de vida Orca con cualquier executor; no duplicar creación/retirada por otro sistema. Resolver conflictos técnicos según contratos; preguntar por elecciones funcionales. No elegir ours/theirs automáticamente. Validar la revisión integrada.
 
 En continuación, consultar estado, verificar Git y actividad nativa. Reclamar solo tras confirmar todos los workers previos detenidos:
 
@@ -122,7 +122,7 @@ En cancelación, detener asignaciones, solicitar cancelación nativa y registrar
 
 Aplicar [cierre y entrega](rules/delivery.md), separando desarrollo, integración, remoto, producción y limpieza. Mantener la evidencia y autorización de cada operación; una no implica las otras.
 
-En Orca registrar settlement y accounting mediante el puente, comprobar el Run real y ausencia de terminales reclamables. Un estado DevFlow no prueba actividad o cierre de procesos Orca. No ejecutar task-update completed tras worker_done.
+Solo con executor orca registrar settlement y accounting mediante el puente, comprobar el Run real y ausencia de terminales reclamables. Un estado DevFlow no prueba actividad o cierre de procesos Orca. No ejecutar task-update completed tras worker_done.
 
 Antes del cierre, resolver el impacto documental y, con memoria activada, guardar el informe de tarea clasificado según [memoria](rules/project-memory.md); sin activación el resumen va solo al informe final del chat, que puede ofrecer una vez crear la base. Incluir las actualizaciones en los checkpoints y la revisión pertinente antes de declarar completed. Si no hay impacto, registrar el motivo; si falta documentación necesaria, entregar partial. Informar qué base quedó revisada y qué preguntas siguen abiertas.
 

@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.12)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.14)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -107,3 +107,22 @@ Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815
 - `code_map` en los resultados (archivo, función, líneas, motivo; máximo 50) y `_run task --context-from TAREA`, que lo pasa al siguiente worker para que no vuelva a explorar el mismo código.
 - `_lite start` devuelve `session_model_hint`: el Coordinator puede sugerir, una vez y sin bloquear, abrir las sesiones de tareas pequeñas con un modelo ligero.
 - Pruebas: 11 nuevas en test_lite_review.py, que fallan todas contra la 1.0.11. Suite completa: 177 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido.
+
+## 1.0.13 · Fiabilidad de entregas y coordinación · 07/10/2026
+
+- Prevalidación de resultados de lectura antes de settlement, con errores de campo y plantillas completas `partial`; no convierte claims ni elimina blockers. Registro posterior conserva los controles de Git, identidad y settlement.
+- Rutas Git literales `[action]`, preservación de staging ajeno y rechazo de directorios eliminados. Cleanup confirma Orca, Git y ruta física durante un plazo acotado, sin repetir borrados; conserva residuos y devuelve salida no cero si falla.
+- Salida UTF-8 bajo Windows cp1252. Tiempos observados con cierre estable, incluso tras accounting posterior; históricos sin evidencia permanecen desconocidos. No son coste ni tiempo de ejecución del agente.
+- Primera entrega con prueba del recorrido principal; revisión y pruebas dirigidas antes de build/Docker finales. Arranque incierto de Orca se reconcilia sin duplicar prompts; no se modifica el runtime.
+- Revisión independiente con fixtures de prevalidación/settlement, Git literal, staging ajeno y borrado asíncrono. Encontró y verificó la corrección de un contador que seguía creciendo después del cierre.
+- Suite completa de 196 casos ejecutada en Windows/Python 3.11. Inicialmente 192 pasaron, 1 fue omitido por permisos de symlink y 3 pruebas antiguas fallaron por cambios de contrato. Se actualizaron únicamente esas pruebas (plantilla completa/partial, éxito explícito y firma del mock); los tres casos fueron reejecutados y aprobados independientemente. Resultado combinado: 195 casos aprobados y 1 omitido; no se presenta como una segunda ejecución completa.
+- Validadores portable y skill-creator aprobados; instalación Codex 1.0.13 y perfiles administrados verificados, preservando modelos y configuración. Pendiente observar el ahorro de tiempo en una nueva ejecución real y diagnosticar la causa interna del arranque Orca.
+
+## 1.0.14 · Delegación nativa en Codex y Claude · 07/10/2026
+
+- Executor native preferido si el runtime anfitrión ofrece una API real de delegación. Codex usa sus subagentes; Claude Code usa Agent. Una petición explícita de executor Orca se mantiene y una ejecución activa nunca cambia de autoridad en silencio.
+- Propiedad de workspace independiente del executor; Orca sigue gestionando sus worktrees y terminales, mientras native mantiene su propia evidencia de workers sin Tasks/Dispatches ficticios ni settlement duplicado.
+- Prueba real de Codex: un único spawn_agent recibió 350 filas numeradas, devolvió NATIVE_DELIVERY_OK y confirmó extremos 000/349.
+- Prueba real de compatibilidad Claude Code 2.1.291: una ejecución print aislada invocó Agent exactamente una vez; el subagente nativo devolvió CLAUDE_NATIVE_DELIVERY_OK con 350 filas y extremos 000/349. Sin denegaciones ni cambios de archivos. Esta prueba de compatibilidad no introduce un launcher oculto: la delegación de desarrollo se realiza con Agent desde la propia sesión Claude.
+- Se preservan perfiles y preferencias de modelos de cada proveedor, scopes, revisión independiente y autorizaciones. La disponibilidad efectiva de otros modelos no se infiere de estas pruebas.
+- Este cambio evita depender del pegado de terminal para la ejecución normal de Pol DevFlow. Los parches experimentales del runtime Orca no se han instalado ni acreditan resolución de su incidencia upstream.

@@ -2,7 +2,7 @@
 import copy
 import json
 from pathlib import Path
-from . import adapters, config
+from . import adapters, config, state
 from .storage import DevFlowError, now
 
 READ_ROLES = ('architect', 'explorer', 'debugger', 'reviewer', 'tester')
@@ -175,6 +175,22 @@ def spec(run, task, root, runtime=None):
             'Do not install MCPs or add Engram. Full policy if needed: ' +
             str((Path(root) / 'core/rules/technical-context.md').resolve()))
     body = adapters.instructions(task['role'], root)
+    skeleton = state.empty_result(task, task.get('orca', {}).get('worker_id', 'orca:<proven stable agent_handle>'))
+    if task['role'] == 'reviewer':
+        skeleton['review'] = {'verdict': 'incomplete'}
+    contract = ('Result enums: status=done|partial|blocked|cancelled; '
+                'criteria_results[].status=passed|failed|not_run; '
+                'validation[].status=passed|failed|not_run|not_applicable; '
+                'review.verdict=passed|changes_required|incomplete. Do not invent synonyms. '
+                'Retain every blocker and unsuccessful check; do not change evidence to make validation pass.\n'
+                'When report files are permitted, preflight before worker_done: '
+                f'python "{Path(root) / "scripts/devflow.py"}" _run validate-result '
+                f'--run {run["run_id"]} --input <result.json> '
+                '(preserve the Coordinator supplied --data-dir if nondefault). '
+                'This checks schema/assignment only, not acceptance or runtime settlement. '
+                'If report files are forbidden/unavailable, return the JSON for Coordinator preflight.\n'
+                'Start with this skeleton; fill facts and actual worker identity, never assume success:\n'
+                + json.dumps(skeleton, ensure_ascii=False, indent=2))
     identity = ('\nworker_id: ' + task['orca']['worker_id']) if task.get('orca') else ''
     text = ('DevFlow assignment executed through Orca. Target: workspace/read_scope/write_scope; '
             'Change: objective; Ownership: assigned role and write_scope; Constraints: contracts below; '
@@ -186,7 +202,8 @@ def spec(run, task, root, runtime=None):
             'Ask the Coordinator if that handle is not supplied or exposed by the live preamble.\n'
             'Return the full structured result to Coordinator; write a report-path only if actually available '
             'and permitted. succeeded corresponds to result done; partial/blocked/cancelled require failed.\n'
-            + identity + '\n\n' + json.dumps(task, ensure_ascii=False, indent=2) + '\n\n' + body + '\n\n' + rule)
+            + identity + '\n\n' + json.dumps(task, ensure_ascii=False, indent=2) + '\n\n' + contract
+            + '\n\n' + body + '\n\n' + rule)
     preferences = copy.deepcopy(run['config_snapshot']['profiles'][task['role']][runtime])
     if 'model' not in preferences:
         preferences.pop('effort', None)

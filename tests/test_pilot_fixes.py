@@ -210,9 +210,12 @@ class PilotFixTests(unittest.TestCase):
         before = self.state_bytes(run)
         value = self.run_cli('template', run, '--task-id', explorer['task_id'])
         self.assertEqual(value, {'schema_version': 1, 'run_id': run['run_id'], 'task_id': explorer['task_id'],
-                                 'role': 'explorer', 'worker_id': '', 'status': 'done', 'summary': '',
+                                 'role': 'explorer', 'worker_id': '', 'status': 'partial', 'summary': '',
                                  'observed_revision': explorer['candidate_revision'], 'result_revision': None,
-                                 'workspace_dirty': False, 'files_changed': [],
+                                 'workspace_dirty': False, 'files_changed': [], 'criteria_results': [],
+                                 'findings': [], 'files_inspected': [], 'commits': [], 'decisions': [],
+                                 'validation': [], 'risks': [], 'out_of_scope': [], 'questions': [],
+                                 'next_action': '',
                                  'usage': {'model': None, 'tokens': None, 'duration_ms': None}})
         review = self.run_cli('template', run, '--task-id', reviewer['task_id'])
         self.assertEqual(review['review'], {'verdict': ''})
@@ -226,7 +229,8 @@ class PilotFixTests(unittest.TestCase):
         explorer = self.run_cli('task', run, '--role', 'explorer', '--objective', 'map')
         reviewer = self.run_cli('task', run, '--role', 'reviewer', '--objective', 'review')
         result = self.run_cli('template', run, '--task-id', explorer['task_id'])
-        result.update(worker_id='w-1', summary='mapped', usage={'model': 'm', 'tokens': 10, 'duration_ms': 5})
+        result.update(status='done', worker_id='w-1', summary='mapped',
+                      usage={'model': 'm', 'tokens': 10, 'duration_ms': 5})
         before = self.state_bytes(run)
         checked = self.run_cli('record', run, '--dry-run', '--input', self.write('r.json', result))
         self.assertTrue(checked['valid'])
@@ -341,10 +345,10 @@ class PilotFixTests(unittest.TestCase):
         self.git('merge', '--no-ff', '-m', 'merge', branch)
         real = gitops.git
 
-        def failing(where, *args):
+        def failing(where, *args, **kwargs):
             if args[:2] == ('worktree', 'remove'):
                 raise storage.DevFlowError('git worktree failed: Permission denied')
-            return real(where, *args)
+            return real(where, *args, **kwargs)
 
         with mock.patch.object(gitops, 'git', side_effect=failing):
             applied = cleanup.cleanup(self.data, self.repo, apply=True)

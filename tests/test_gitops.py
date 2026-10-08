@@ -72,6 +72,42 @@ class GitTests(unittest.TestCase):
         with self.assertRaises(storage.DevFlowError):
             gitops.commit(self.repo, ['../secret'], 'bad')
 
+    def test_commit_bracket_route_is_literal_and_preserves_other_changes(self):
+        self.git('switch', '-c', 'feature/route')
+        route = self.repo / 'api/[action]/route.ts'
+        other = self.repo / 'api/a/route.ts'
+        for path in (route, other):
+            path.parent.mkdir(parents=True)
+            path.write_text('export const route = 1;\n')
+        gitops.commit(self.repo, ['api/[action]/route.ts'], 'literal route')
+        self.assertEqual(self.git('show', '--pretty=', '--name-only', 'HEAD'), 'api/[action]/route.ts')
+        self.assertTrue(other.exists())
+        self.assertIn('?? api/a/', self.git('status', '--porcelain'))
+        route.unlink()
+        gitops.commit(self.repo, ['api/[action]/route.ts'], 'remove literal route')
+        self.assertEqual(self.git('show', '--pretty=', '--name-only', 'HEAD'), 'api/[action]/route.ts')
+
+    def test_commit_rejects_directories_wildcards_and_pathspec_magic(self):
+        self.git('switch', '-c', 'feature/route')
+        (self.repo / 'api').mkdir()
+        for value in ('api', '*.py', 'app?.py', ':(glob)**', '../outside', str(self.repo / 'app.py')):
+            with self.subTest(value=value), self.assertRaises(storage.DevFlowError):
+                gitops.commit(self.repo, [value], 'invalid')
+        self.assertEqual(self.git('diff', '--cached', '--name-only'), '')
+
+    def test_deleted_directory_is_rejected_before_staging(self):
+        self.git('switch', '-c', 'feature/route')
+        folder = self.repo / 'api/[action]'
+        folder.mkdir(parents=True)
+        route = folder / 'route.ts'
+        route.write_text('export const route = 1;\n')
+        gitops.commit(self.repo, ['api/[action]/route.ts'], 'route')
+        route.unlink()
+        folder.rmdir()
+        with self.assertRaises(storage.DevFlowError):
+            gitops.commit(self.repo, ['api/[action]'], 'directory deletion')
+        self.assertEqual(self.git('diff', '--cached', '--name-only'), '')
+
 
 if __name__ == '__main__':
     unittest.main()

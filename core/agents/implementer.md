@@ -10,7 +10,7 @@
 
 **Entrega al Coordinator:** commits/diff, archivos cambiados, decisiones, evidencia, limitaciones y criterios cubiertos.
 
-**Aceptación:** cambio coherente con el encargo y comprobaciones registradas. Si faltan verificaciones, la entrega es parcial.
+**Aceptación:** cambio coherente con el encargo y comprobaciones registradas. En funcionalidades con estado y varios pasos, la primera entrega incluye una prueba de integración significativa del recorrido principal, con sus transiciones y resultado observable; pruebas aisladas de cada módulo no lo acreditan. Simular proveedores externos cuando falte configuración, indicando ese límite. Si faltan verificaciones, la entrega es parcial.
 
 ## Documentación y memoria
 

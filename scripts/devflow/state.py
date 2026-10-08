@@ -11,6 +11,7 @@ from .storage import DevFlowError, FileLock, atomic_write, json_bytes, now, read
 
 MODES = ('error', 'feature', 'optimize')
 FINAL_STATES = ('completed', 'partial', 'blocked', 'cancelled')
+RESULT_STATUSES = ('done', 'partial', 'blocked', 'cancelled')
 RESULT_FIELDS = ('schema_version', 'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary',
                  'observed_revision', 'result_revision', 'workspace_dirty', 'criteria_results', 'findings',
                  'files_inspected', 'files_changed', 'commits', 'decisions', 'validation', 'risks',
@@ -71,6 +72,9 @@ def save(data, run, event):
     safe_id(run['run_id'])
     config.validate(run['config_snapshot'])
     run['updated_at'] = now()
+    if event == 'close' and run.get('status') in FINAL_STATES:
+        # Settlement/accounting may update updated_at later; the closure endpoint must stay stable.
+        run['closed_at'] = run['updated_at']
     run.setdefault('events', []).append({'at': run['updated_at'], 'event': event})
     folder = run_dir(data, run['run_id'])
     # State is authoritative; context/journal are projections and can be rebuilt on resume.
@@ -108,7 +112,7 @@ def status(data, run_id=None, repository=None, verify_git=True):
         run = candidates[0]
     info = {'run': run, 'worker_activity': 'Recorded state only; live worker activity is not confirmed',
             'last_recorded_at': run['updated_at'], 'evidence_current': 'not_verified',
-            'overdue_tasks': overdue_tasks(run)}
+            'overdue_tasks': overdue_tasks(run), 'timing': elapsed_timing(run)}
     if verify_git:
         try:
             from .gitops import inspect
@@ -134,6 +138,43 @@ def status(data, run_id=None, repository=None, verify_git=True):
         except DevFlowError as exc:
             info['git_verification_error'] = str(exc)
     return info
+
+
+def elapsed_timing(run, at=None):
+    """Observed wall-clock intervals, never agent compute or a claim of runtime activity."""
+    at = at or dt.datetime.now(dt.timezone.utc)
+    def parse(value):
+        try:
+            stamp = dt.datetime.fromisoformat(value)
+            return stamp if stamp.tzinfo else None
+        except (TypeError, ValueError):
+            return None
+    def interval(start, end):
+        start, end = parse(start), parse(end)
+        return round((end - start).total_seconds(), 3) if start and end and end >= start else None
+    closed = run.get('status') in FINAL_STATES
+    endpoint = at.isoformat()
+    endpoint_source = 'observation_now'
+    if closed:
+        endpoint = run.get('closed_at')
+        endpoint_source = 'closed_at'
+        if not parse(endpoint):
+            # Legacy runs recorded explicit close events; generic updates are not evidence of closure.
+            endpoint = next((event.get('at') for event in reversed(run.get('events', []))
+                             if event.get('event') == 'close' and parse(event.get('at'))), None)
+            endpoint_source = 'close_event' if endpoint else 'unknown'
+    tasks = []
+    for task in run.get('tasks', []):
+        recorded = task.get('result_recorded_at')
+        # Old records have no per-task delivery timestamp; do not infer one from an unrelated event.
+        end = recorded or (endpoint if task.get('status') in ('pending', 'active') else None)
+        tasks.append({'task_id': task.get('task_id'), 'role': task.get('role'),
+                      'assigned_at': task.get('assigned_at'), 'result_recorded_at': recorded,
+                      'elapsed_seconds': interval(task.get('assigned_at'), end)})
+    return {'elapsed_seconds': interval(run.get('created_at'), endpoint), 'tasks': tasks,
+            'observation_ended_at': endpoint, 'endpoint_source': endpoint_source,
+            'note': 'Observed wall-clock elapsed time includes waiting, coordination and checks; '
+                    'not agent compute. Overlapping tasks are not additive; missing timestamps stay null.'}
 
 
 def overdue_tasks(run, at=None):
@@ -244,12 +285,15 @@ def validate_result(task, result):
             result.setdefault(field, [])
         result.setdefault('next_action', '')
     if not isinstance(result, dict) or any(field not in result for field in RESULT_FIELDS):
-        raise DevFlowError('Incomplete result contract; request missing fields before continuing')
+        missing = [field for field in RESULT_FIELDS if not isinstance(result, dict) or field not in result]
+        raise DevFlowError('Incomplete result contract; missing fields: ' + ', '.join(missing))
     for field in ('run_id', 'task_id', 'role'):
         if result[field] != task[field]:
             raise DevFlowError(f'Result {field} does not match assignment')
-    if result['schema_version'] != 1 or result['status'] not in ('done', 'partial', 'blocked', 'cancelled'):
-        raise DevFlowError('Invalid result schema/status')
+    if result['schema_version'] != 1:
+        raise DevFlowError('schema_version must be 1')
+    if result['status'] not in RESULT_STATUSES:
+        raise DevFlowError('status must be one of: ' + ', '.join(RESULT_STATUSES))
     if not isinstance(result['worker_id'], str) or not result['worker_id']:
         raise DevFlowError('Result needs the actual worker identity')
     if not isinstance(result['workspace_dirty'], bool) or any(not isinstance(result[f], list) for f in LIST_FIELDS):
@@ -261,10 +305,16 @@ def validate_result(task, result):
             raise DevFlowError(f'Worker changed a path outside write_scope: {changed}')
     if task['role'] == 'reviewer' and result['files_changed']:
         raise DevFlowError('Reviewer must not change product code/tests')
-    for check in result['validation']:
-        validate_check(check)
-    for criterion in result['criteria_results']:
-        validate_criterion(criterion)
+    for index, check in enumerate(result['validation']):
+        try:
+            validate_check(check)
+        except DevFlowError as exc:
+            raise DevFlowError(f'validation[{index}]: {exc}') from exc
+    for index, criterion in enumerate(result['criteria_results']):
+        try:
+            validate_criterion(criterion)
+        except DevFlowError as exc:
+            raise DevFlowError(f'criteria_results[{index}]: {exc}') from exc
         if criterion['criterion'] not in task['acceptance_criteria']:
             raise DevFlowError('Worker reported an unknown acceptance criterion')
     for finding in result['findings']:
@@ -334,7 +384,7 @@ def resolve_finding(run, value):
 
 def validate_check(check):
     if not isinstance(check, dict) or not check.get('name') or check.get('status') not in ('passed', 'failed', 'not_run', 'not_applicable'):
-        raise DevFlowError('Invalid validation record')
+        raise DevFlowError('Validation needs name and status (passed, failed, not_run, not_applicable)')
     if not check.get('revision') or not check.get('procedure') or not check.get('evidence'):
         raise DevFlowError('Validation needs revision, procedure and evidence/reason')
     return check
@@ -345,7 +395,7 @@ def validate_criterion(value):
             or not value['criterion'].strip() or value.get('status') not in ('passed', 'failed', 'not_run')
             or not isinstance(value.get('revision'), str) or not value['revision'].strip()
             or not isinstance(value.get('evidence'), str) or not value['evidence'].strip()):
-        raise DevFlowError('Criterion result requires name, status, revision and concrete evidence/reason')
+        raise DevFlowError('Criterion result requires criterion, status (passed, failed, not_run), revision and concrete evidence/reason')
     return value
 
 

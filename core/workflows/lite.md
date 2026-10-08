@@ -18,15 +18,15 @@ Si además toca permisos/seguridad o reglas de negocio relevantes, o el usuario/
 
 1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. Ejecutar `_profile show`: si existe y no está `stale`, usar sus comandos; si falta o está obsoleto, pol-lite los descubre. Si devuelve `codegraph`, pasar su `project_path` a pol-lite. No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
 2. Crear la rama en la carpeta actual, sin worktree:
-   `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION [--review]`
+   `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION [--review] --executor EXECUTOR`
    El helper exige checkout limpio salvo untracked, nunca escribe en main/master y registra la rama para `cleanup`. Devuelve `untracked_preserved`, `session_model_hint` e `identity`; si esta trae `warning`, resolver el autor según [Git](../rules/git-worktrees.md).
-3. Delegar en `pol-lite`: petición, criterios, carpeta, rama, revisión base, scope de producto, `untracked_preserved` como "no tocar ni confirmar", autor si se resolvió, comprobaciones (comandos del perfil si existen) y ruta de esta skill. Solo con memoria activada, añadir la ruta del informe y hasta 2 documentos/memoria afectados; sin activación no hay informe ni memoria en el repositorio. El Coordinator no implementa salvo en native si el runtime no tiene workers; entonces avisar de que se usa el modelo de la sesión.
+3. Delegar en `pol-lite`: petición, criterios, carpeta, rama, revisión base, scope de producto, `untracked_preserved` como "no tocar ni confirmar", autor si se resolvió, comprobaciones (comandos del perfil si existen) y ruta de esta skill. Solo con memoria activada, añadir la ruta del informe y hasta 2 documentos/memoria afectados; sin activación no hay informe ni memoria en el repositorio. Usar la API nativa comprobada del anfitrión (Codex o Claude), salvo petición explícita Orca o falta de API nativa; en ese caso comprobar Orca en vivo. No simular workers con subprocessos o pegado TUI. Si no hay backend disponible, informar bloqueo.
 4. Verificar con Git: rama, commit, archivos cambiados dentro de los límites y checkout limpio. No aceptar `done` sin comprobaciones ejecutadas en el commit final. Guardar en el perfil los comandos que pol-lite ejecutó (`_profile set`) y registrar su uso real con `_metrics add --lite ID --role lite [--owner SESSION]`.
 5. Solo lite+review: `_lite review-diff --lite ID --author-id LITE_WORKER_ID` genera el diff con hash. Lanzar `pol-reviewer` (distinto del autor y del Coordinator) con la ruta del diff y los criterios; guardar su JSON {worker_id, verdict passed|changes_required|incomplete, revision, findings} con `_lite review --lite ID --input FILE`. Con changes_required, enviar los blockers aceptados a pol-lite para una corrección con commit y repetir review-diff y review. Si `_lite review` devuelve `escalate` (tercer changes_required), pasar a full. No hay `done` sin `review_current: true` en `_lite status --lite ID`.
 
 ## Orca
 
-Solo si se solicita Orca o la sesión Orca está comprobada en esta invocación, leer el apartado lite del [adaptador Orca](../../adapters/orca/README.md); sustituye al launcher native. En resumen: `_lite start` con `--executor orca --owner SESSION`; lanzar el contrato lite por worker-start con el modelo lite elegido o herencia, verificando el modelo efectivo; registrar `_lite link|settle|account` y resolver liberación o retención acreditada antes de cerrar o escalar. Sin ese accounting `cleanup` no retira la rama. Si Orca no permite lanzar el worker, bloquear y explicar el error.
+Elegir `EXECUTOR` antes de iniciar: native por defecto con API anfitriona comprobada, también en una sesión Orca. Una petición explícita de workers Orca o ausencia de API nativa exige preflight vivo y el apartado lite del [adaptador Orca](../../adapters/orca/README.md); entonces sustituye al launcher native. No cambiar executor en silencio durante un run. En resumen: `_lite start` con `--executor orca --owner SESSION`; lanzar el contrato lite por worker-start con el modelo lite elegido o herencia, verificando el modelo efectivo; registrar `_lite link|settle|account` y resolver liberación o retención acreditada antes de cerrar o escalar. Sin ese accounting `cleanup` no retira la rama. Si Orca no permite lanzar el worker, bloquear y explicar el error. Los workspaces Orca siguen gestionados por Orca aunque EXECUTOR sea native; no crear Tasks/Dispatches ni settlement Orca para workers nativos.
 
 ## Pasar a full
 
@@ -34,7 +34,7 @@ Si el worker devuelve `escalate`, o se detecta una condición de full, confirmar
 
 `python scripts/devflow.py --repo PROJECT _run start --mode MODE --request DESCRIPTION --criterion CRITERION --runtime RUNTIME --owner SESSION_ID --reuse-branch RAMA_LITE`
 
-En Orca añadir `--executor orca` y liquidar antes el intento lite; nunca relanzar por timeout.
+Conservar el executor del registro lite al pasar a full. Con executor orca añadir `--executor orca` y liquidar antes el intento lite; nunca relanzar por timeout. `--runtime` identifica el anfitrión codex/claude, no el executor.
 
 ## Resumen final
 

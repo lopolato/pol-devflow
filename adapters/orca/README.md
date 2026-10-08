@@ -2,9 +2,11 @@
 
 Este primer adaptador admite ejecución local sobre un workspace accesible por Coordinator y workers. Placement remoto/WSL requiere una adaptación y verificación adicionales; no lanzar allí con este puente ni sustituirlo por ejecución local silenciosa.
 
-Orca es el backend de coordinación; codex/claude siguen siendo los motores de los workers. DevFlow conserva contratos y evidencia de desarrollo. Orca es la autoridad de Run, Task, Dispatch, actividad, mensajes, settlement y propiedad de terminales. El puente Python no lanza procesos ni autentica mensajes.
+Con executor orca, Orca es el backend de coordinación; codex/claude siguen siendo los motores de los workers. DevFlow conserva contratos y evidencia de desarrollo. Orca es la autoridad de Run, Task, Dispatch, actividad, mensajes, settlement y propiedad de terminales. El puente Python no lanza procesos ni autentica mensajes.
 
-Usar este adaptador cuando el usuario solicite Orca o la sesión proporcione contexto Orca comprobado. No activar Orca por la mera presencia de un ejecutable. No sustituirlo por subagentes Codex/Claude cuando se pide procedencia Orca. Fuera de Orca, mantener backend native.
+Preferir executor native si la sesión anfitriona dispone de API de delegación comprobada, también dentro de Orca. Usar executor orca ante petición explícita de workers Orca o falta de API nativa, tras verificar acceso vivo y capacidades de lanzamiento. No activar este executor por la mera presencia del ejecutable o contexto Orca; no sustituirlo cuando se pide procedencia Orca ni cambiar el executor de un run activo silenciosamente. Si ninguno funciona, informar el bloqueo.
+
+La gestión de workspaces/terminales Orca es independiente: cargar su guía y conservar su propiedad/ciclo de vida aunque los workers sean nativos. En ese caso no crear Run/Task/Dispatch Orca para los workers ni registrar link/settle/account del puente; su actividad pertenece exclusivamente a la API anfitriona.
 
 ## Cargar el contrato de la instalación
 
@@ -31,6 +33,12 @@ Crear tareas DevFlow con `_run task`; `_orca spec --run ID --owner SESSION --tas
 Lanzar mediante worker-start del contrato Orca, con spec como argumento seguro; usar archivo/API de argumentos si la versión los admite, sin interpolar texto en shell. Pasar --model solo para una elección de usuario registrada; --effort requiere --model y compatibilidad real. Al reutilizar terminal no pasar model/effort; reutilizar únicamente cuando el modelo efectivo existente sea adecuado. Comparar launch.requested y launch.effective si la versión los expone; si no, declarar selección efectiva no verificada. El modelo de Coordinator sigue perteneciendo al chat principal.
 
 Incluir Target, Change, Constraints, Ownership y Observable acceptance, las rutas autorizadas, revisión, contratos y [contexto técnico](../../core/rules/technical-context.md). Los workers no necesitan el historial completo. No reutilizar un autor para aportar revisión independiente; mantener una identidad estable del agente a través de roles y Dispatches.
+
+## Confirmar el inicio
+
+`accepted` o `input_accepted` acredita entrada recibida, no `turn_started`. Ante `outcome_unknown`/`turn_start_unobserved`, conservar Task/Dispatch/handle y seguir request-show/nextAction de la guía instalada; no duplicar el encargo ni lanzar otro worker. Hacer comprobaciones acotadas y comunicar el estado pendiente antes de seguir esperando.
+
+Si la recuperación requiere inspeccionar el compositor, cargar también la guía `orca-cli` del mismo ejecutable y comprobar `terminal read/send --help`. Leer la pantalla real con `terminal read --terminal HANDLE --screen --json`; el historial acumulado no prueba un borrador. Solo si la pantalla/compositor confirma el encargo exacto aún sin enviar, la terminal está lista y el runtime documenta Enter sin texto, enviar una única entrada `terminal send --terminal HANDLE --enter --json`. Nunca volver a pegar el prompt, enviar Enter ante un borrador truncado/distinto o interpretar esa aceptación como turno iniciado. Comprobar después el inicio por el protocolo runtime; si sigue incierto, conservar autoridad y reportar la limitación. Esta recuperación no corrige el fallo interno de arranque Orca.
 
 ## Puente de evidencia full
 

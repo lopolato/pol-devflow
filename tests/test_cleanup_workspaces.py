@@ -49,7 +49,7 @@ class WorkspaceCleanupTests(unittest.TestCase):
 
     def test_orca_removal_is_reconciled_after_transport_error(self):
         self.register()
-        def runtime(record, action):
+        def runtime(record, action, **kwargs):
             if action == 'remove':
                 self.git('worktree', 'remove', str(self.workspace))
                 raise storage.DevFlowError('connection closed')
@@ -84,7 +84,7 @@ class WorkspaceCleanupTests(unittest.TestCase):
         self.assertEqual(cleanup.cleanup(self.data, self.repo)['remote'], None)
         item = cleanup.cleanup(self.data, self.repo, remote='origin')['items'][0]
         self.assertTrue(item['remote_branch']['exists'])
-        def runtime(record, action):
+        def runtime(record, action, **kwargs):
             if action == 'remove':
                 self.git('worktree', 'remove', str(self.workspace))
             return {'exists': self.workspace.exists()}
@@ -105,7 +105,7 @@ class WorkspaceCleanupTests(unittest.TestCase):
 
     def test_orca_can_delete_the_integrated_branch_itself(self):
         self.register()
-        def runtime(record, action):
+        def runtime(record, action, **kwargs):
             if action == 'remove':
                 self.git('worktree', 'remove', str(self.workspace))
                 self.git('branch', '-d', 'feature/summary')
@@ -123,6 +123,104 @@ class WorkspaceCleanupTests(unittest.TestCase):
         self.assertTrue(result['errors'])
         self.assertEqual(runtime.call_args.args[1], 'show')
         self.assertTrue(self.workspace.exists())
+
+    def test_delayed_orca_removal_waits_for_all_three_authorities(self):
+        self.register()
+        post_remove_shows = 0
+        queued = False
+        def runtime(record, action, **kwargs):
+            nonlocal queued, post_remove_shows
+            if action == 'remove':
+                queued = True
+                return {'exists': False}
+            if not queued:
+                return {'exists': True}
+            post_remove_shows += 1
+            if post_remove_shows == 2:
+                # Orca is gone before its Git/path cleanup has completed.
+                return {'exists': False}
+            if post_remove_shows == 3:
+                self.git('worktree', 'remove', str(self.workspace))
+            return {'exists': self.workspace.exists()}
+        with patch('devflow.cleanup._orca_workspace', side_effect=runtime), \
+                patch('devflow.cleanup.time.sleep') as sleep:
+            result = cleanup.cleanup(self.data, self.repo, apply=True, orca_idle_confirmed=True)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(post_remove_shows, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertFalse(self.workspace.exists())
+        self.assertEqual(self.git('branch', '--list', 'feature/summary'), '')
+
+    def test_unfinished_removal_times_out_and_preserves_residual_and_history(self):
+        self.register()
+        def runtime(record, action, **kwargs):
+            return {'exists': action != 'remove'}
+        with patch('devflow.cleanup._orca_workspace', side_effect=runtime), \
+                patch('devflow.cleanup.time.monotonic', side_effect=[0, 0, 0, 31, 31]):
+            result = cleanup.cleanup(self.data, self.repo, apply=True, orca_idle_confirmed=True)
+        self.assertEqual(result['removed'], [])
+        self.assertIn('bounded verification', result['errors'][0]['error'])
+        self.assertTrue(self.workspace.exists())
+        self.assertTrue(self.git('branch', '--list', 'feature/summary'))
+        record = json.loads(next((self.data / 'worktrees/.devflow-ownership').glob('*.json')).read_text())
+        self.assertEqual(record['residual_path'], str(self.workspace.resolve()))
+        self.assertNotIn('removed_at', record)
+
+    def test_transient_verification_failure_is_inconclusive_then_recovers(self):
+        self.register()
+        queued = False
+        probes = 0
+        def runtime(record, action, **kwargs):
+            nonlocal queued, probes
+            if action == 'remove':
+                queued = True
+                return {'exists': False}
+            if not queued:
+                return {'exists': True}
+            probes += 1
+            if probes == 1:
+                raise storage.DevFlowError('temporary show connection failure')
+            self.git('worktree', 'remove', str(self.workspace))
+            return {'exists': False}
+        with patch('devflow.cleanup._orca_workspace', side_effect=runtime), \
+                patch('devflow.cleanup.time.sleep') as sleep:
+            result = cleanup.cleanup(self.data, self.repo, apply=True, orca_idle_confirmed=True)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(probes, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_removal_error_detail_survives_verification_timeout(self):
+        self.register()
+        def runtime(record, action, **kwargs):
+            if action == 'remove':
+                raise storage.DevFlowError('connection closed after queueing')
+            return {'exists': True}
+        with patch('devflow.cleanup._orca_workspace', side_effect=runtime), \
+                patch('devflow.cleanup.time.monotonic', side_effect=[0, 0, 0, 31, 31]):
+            result = cleanup.cleanup(self.data, self.repo, apply=True, orca_idle_confirmed=True)
+        self.assertEqual(result['removed'], [])
+        self.assertIn('bounded verification', result['errors'][0]['error'])
+        self.assertIn('connection closed after queueing', result['errors'][0]['error'])
+        self.assertTrue(self.workspace.exists())
+
+    def test_lost_async_removal_response_is_reconciled_without_repeating_remove(self):
+        self.register()
+        removes = 0
+        queued = False
+        def runtime(record, action, **kwargs):
+            nonlocal queued, removes
+            if action == 'remove':
+                queued = True
+                removes += 1
+                raise storage.DevFlowError('connection closed after queueing')
+            if queued:
+                self.git('worktree', 'remove', str(self.workspace))
+                return {'exists': False}
+            return {'exists': True}
+        with patch('devflow.cleanup._orca_workspace', side_effect=runtime):
+            result = cleanup.cleanup(self.data, self.repo, apply=True, orca_idle_confirmed=True)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(removes, 1)
 
     def test_unknown_remote_is_rejected_without_mutation(self):
         self.register()
