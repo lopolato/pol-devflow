@@ -9,6 +9,7 @@ through a feature branch with green CI. This script never edits files or commits
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -98,7 +99,8 @@ class Release:
         self.say(('[dry-run] ' if self.dry else '$ ') + shown)
         if self.dry:
             return
-        result = subprocess.run(command, cwd=self.repo)
+        # No bytecode: __pycache__ left by the test run would make the tree look dirty afterwards.
+        result = subprocess.run(command, cwd=self.repo, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
         if result.returncode:
             raise ReleaseError(f'{label} failed (exit {result.returncode})')
 
