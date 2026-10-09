@@ -219,7 +219,7 @@ class PilotFixTests(unittest.TestCase):
                                  'next_action': '',
                                  'usage': {'model': None, 'tokens': None, 'duration_ms': None}})
         review = self.run_cli('template', run, '--task-id', reviewer['task_id'])
-        self.assertEqual(review['review'], {'verdict': ''})
+        self.assertEqual(review['review'], {'verdict': '', 'coverage': ''})
         self.cli('_run', 'template', '--run', run['run_id'], '--owner', 'intruder', '--task-id', explorer['task_id'],
                  ok=False)
         self.run_cli('template', run, '--task-id', 'task-missing', ok=False)
@@ -246,7 +246,7 @@ class PilotFixTests(unittest.TestCase):
         self.assertIn('review.verdict', error)
         self.run_cli('record', run, '--input', self.write('rv.json', review), ok=False)
         self.assertEqual(self.state_bytes(run), before)
-        review['review'] = {'verdict': 'passed'}
+        review['review'] = {'verdict': 'passed', 'coverage': 'Inspected complete diff'}
         self.assertEqual(self.run_cli('record', run, '--dry-run', '--input', self.write('rv.json', review))
                          ['review_verdict'], 'passed')
         self.assertEqual(self.state_bytes(run), before)

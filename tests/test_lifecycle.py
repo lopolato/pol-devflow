@@ -81,7 +81,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotEqual(early.returncode, 0)
         review_task = self.task('reviewer')
         review = state.empty_result(review_task, 'reviewer-2')
-        review.update({'status': 'done', 'summary': 'Inspected actual diff', 'review': {'verdict': 'passed'}})
+        review.update({'status': 'done', 'summary': 'Inspected actual diff',
+                       'review': {'verdict': 'passed', 'coverage': 'Inspected the complete candidate diff'}})
         recorded = self.mutate('record', '--input', self.input_file(review))
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         closed = self.mutate('close', '--status', 'completed')
