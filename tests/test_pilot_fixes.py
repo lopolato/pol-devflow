@@ -113,7 +113,8 @@ class PilotFixTests(unittest.TestCase):
     def test_incident_rule_only_applies_to_error_mode(self):
         run = self.start('feature')
         self.pass_criterion(run)
-        self.assertEqual(self.run_cli('check-close', run), {'can_complete': True, 'blockers': []})
+        check = self.run_cli('check-close', run)
+        self.assertEqual((check['can_complete'], check['blockers'], check['budget_warnings']), (True, [], []))
 
     # B. Worker budget -------------------------------------------------------------------
 

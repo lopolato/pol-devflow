@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from . import gitops, state
+from . import gitops, metrics, state
 from .storage import DevFlowError, FileLock, atomic_write, digest, inside, json_bytes, now, read_json, safe_id
 
 PROTECTED = ('main', 'master')
@@ -295,6 +295,11 @@ def cleanup(data, repository, apply=False, discard=(), into=None, purge_history=
             remote=None, orca_idle_confirmed=False):
     info = gitops.inspect(repository)
     repo = info['workspace']
+    if apply:
+        # Only state-changing invocations are counted; previews stay read-only.
+        flags = {'apply': apply, 'discard': discard, 'into': into, 'purge_history': purge_history, 'remote': remote,
+                 'orca_idle_confirmed': orca_idle_confirmed}
+        metrics.log_command(data, 'cleanup', [name for name, value in flags.items() if value])
     worktrees = _worktrees(repo)
     target = target_branch(repo, into)
     discard = set(discard)

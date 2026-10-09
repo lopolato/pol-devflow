@@ -32,7 +32,7 @@ class RunLock(FileLock):
 
 
 def create(data, repository, mode, request, model_config, branch, revision, criteria,
-           workspace=None, runtime='codex', owner='coordinator', capabilities=None):
+           workspace=None, runtime='codex', owner='coordinator', capabilities=None, budget=None):
     if mode not in MODES or runtime not in config.RUNTIMES or not request.strip():
         raise DevFlowError('Run needs a valid mode/runtime and nonempty request')
     if not criteria or not all(isinstance(c, str) and c.strip() for c in criteria):
@@ -56,7 +56,7 @@ def create(data, repository, mode, request, model_config, branch, revision, crit
            'tasks': [], 'workers': [], 'authors': [owner], 'validations': [], 'required_checks': [],
            'review_required': False, 'review': None, 'findings': [], 'attempts': {}, 'decisions': [],
            'questions': [], 'measurement': None, 'incident': None, 'next_action': 'Inspect workflow and assign the next task',
-           'events': []}
+           'events': [], 'features': [], 'budget': budget or make_budget()}
     save(data, run, 'created')
     return run
 
@@ -65,7 +65,78 @@ def load(data, run_id):
     value = read_json(run_dir(data, run_id) / 'state.json')
     if not isinstance(value, dict) or value.get('schema_version') != 1 or value.get('run_id') != run_id:
         raise DevFlowError('Run state schema/identity mismatch')
+    extra = run_dir(data, run_id) / 'features.json'
+    if extra.exists():
+        # Read-only helpers record their use beside state.json; the next save folds it in.
+        mark_features(value, *read_json(extra))
     return value
+
+
+def mark_features(record, *names):
+    record['features'] = sorted(set(record.get('features') or []) | {n for n in names if n})
+    return record['features']
+
+
+def _limit_value(value, name):
+    if value is not None and (type(value) is not int or value <= 0):
+        raise DevFlowError(f'{name} must be a positive integer')
+    return value
+
+
+def make_budget(max_workers=None, max_tokens=None):
+    return {'max_workers': _limit_value(max_workers, '--max-workers'),
+            'max_tokens': _limit_value(max_tokens, '--max-tokens'), 'history': []}
+
+
+def check_worker_budget(run):
+    limit = (run.get('budget') or {}).get('max_workers')
+    used = len(run.get('tasks', []))
+    if limit is not None and used >= limit:
+        raise DevFlowError(f'Run budget reached: {used} workers assigned of max {limit}; ask the user before raising it')
+
+
+def raise_budget(run, value):
+    """User-approved increase only; the previous value stays in history."""
+    if (not isinstance(value, dict) or set(value) - {'max_workers', 'max_tokens', 'approved_by'}
+            or not set(value) & {'max_workers', 'max_tokens'}):
+        raise DevFlowError('budget accepts max_workers and/or max_tokens plus approved_by')
+    approved = value.get('approved_by')
+    if not isinstance(approved, str) or not approved.strip():
+        raise DevFlowError('Raising the run budget needs approved_by (who approved it)')
+    budget = run.setdefault('budget', make_budget())
+    changes = []
+    for key in ('max_workers', 'max_tokens'):
+        if key not in value:
+            continue
+        new, old = _limit_value(value[key], key), budget.get(key)
+        if old is None or new <= old:
+            raise DevFlowError(f'{key} can only be raised above its current limit ({old or "unlimited"})')
+        changes.append((key, old, new))
+    for key, old, new in changes:
+        budget.setdefault('history', []).append({'field': key, 'previous': old, 'new': new,
+                                                 'approved_by': approved, 'at': now()})
+        budget[key] = new
+    return budget
+
+
+def budget_summary(run):
+    """Workers and known tokens against the run budget; tokens are partial data, so never a blocker."""
+    budget = run.get('budget') or {}
+    used = len(run.get('tasks', []))
+    tokens = sum(m['tokens'] for m in run.get('metrics', []) if isinstance(m.get('tokens'), int))
+    exceeded = []
+    if budget.get('max_workers') is not None and used > budget['max_workers']:
+        exceeded.append('max_workers')
+    if budget.get('max_tokens') is not None and tokens > budget['max_tokens']:
+        exceeded.append('max_tokens')
+    return {'max_workers': budget.get('max_workers'), 'workers_used': used, 'max_tokens': budget.get('max_tokens'),
+            'tokens_known': tokens, 'exceeded': exceeded}
+
+
+def budget_warnings(run):
+    summary = budget_summary(run)
+    return [f"Known tokens {summary['tokens_known']} exceed max_tokens {summary['max_tokens']} "
+            '(recorded usage is partial; reported, not a blocker)'] if 'max_tokens' in summary['exceeded'] else []
 
 
 def save(data, run, event):
@@ -112,7 +183,7 @@ def status(data, run_id=None, repository=None, verify_git=True):
         run = candidates[0]
     info = {'run': run, 'worker_activity': 'Recorded state only; live worker activity is not confirmed',
             'last_recorded_at': run['updated_at'], 'evidence_current': 'not_verified',
-            'overdue_tasks': overdue_tasks(run), 'timing': elapsed_timing(run)}
+            'overdue_tasks': overdue_tasks(run), 'timing': elapsed_timing(run), 'budget': budget_summary(run)}
     if run.get('nesting'):
         info['delegation_tree'] = delegation_tree(run)
     if verify_git:

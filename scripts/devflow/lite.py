@@ -87,6 +87,7 @@ def record_review(record, value):
         record.setdefault('review_history', []).append(record['review'])
     record['review'] = {'verdict': value['verdict'], 'worker_id': value['worker_id'], 'revision': value['revision'],
                         'findings': copy.deepcopy(findings), 'at': now()}
+    state.mark_features(record, 'review:lite')
     if value['verdict'] == 'changes_required':
         record['review_cycles'] = record.get('review_cycles', 0) + 1
     escalate = record.get('review_cycles', 0) > MAX_CHANGE_CYCLES

@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.16)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.17)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -139,3 +139,13 @@ Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815
 - Hallazgo: en una repetición, el padre lanzó al hijo en segundo plano y terminó antes de recibir su respuesta. Ahora el contrato del worker y el adaptador de Claude exigen lanzar cada hijo esperando su resultado (`run_in_background: false`) y no terminar antes que los hijos.
 - Flujo aclarado para Claude: el Coordinator registra los hijos antes de lanzar al padre, el padre recibe directamente la respuesta de sus hijos y la devuelve con su resultado, y el Coordinator registra cada hijo.
 - `evals/check_claude_nesting.py`: repite las cuatro pruebas (unos 0,90 $). Conviene ejecutarlo tras actualizar Claude Code. Comprueba que el hijo no se lance en segundo plano.
+
+## 1.0.17 · Publicación controlada, uso real, presupuesto y conocimiento del proyecto · 09/10/2026
+
+- Publicación: `scripts/release.py VERSION [--push] [--install] [--evals --yes] [--dry-run]` solo trabaja en `main` limpio y al día, exige que la versión ya esté subida en la rama de trabajo (sin commits en `main`), nota en VERIFICATION, cabecera del README, tests, CI de GitHub en verde (si `gh` está disponible) y etiqueta nueva; después etiqueta, publica e instala. `main` está protegida en GitHub: requiere las 4 comprobaciones de la CI, también para administradores, sin force-push ni borrado.
+- Uso real: cada run y registro lite guarda `features` (automáticas y declaradas con `_metrics feature`); `stats --features` cuenta su uso y lista `never_used`. Solo `cleanup --apply` deja un registro global sin rutas; las consultas no escriben nada.
+- Presupuesto opcional por run: `--max-workers` (bloquea nuevos encargos al llegar al límite) y `--max-tokens` (solo aviso); subirlos exige `_run update budget` con `approved_by`.
+- Autoevaluación: `_retro add` al final de cada tarea (qué fue bien, problemas por categoría, sugerencias) y `retro` para el resumen; filtro de datos personales (email, teléfono, IBAN, DNI/NIE/CIF).
+- Reglas del proyecto: `_rules add|confirm|remove|for|import-tests` y `rules` (consulta). Guardadas fuera del repo por defecto (o `.devflow/rules.json` con `--repo-file`), con aviso de obsoletas si cambian sus archivos. Un bug corregido propone una regla `must_not` enlazada a su test; el reviewer comprueba las reglas de los archivos tocados.
+- README con guía rápida al principio e historial de una línea por versión.
+- Pruebas nuevas: test_release.py (19), test_usage_budget.py (8), test_retro.py y test_rules.py (20). Las de uso, retro y reglas fallan contra la 1.0.16.

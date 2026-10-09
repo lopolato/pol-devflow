@@ -1,11 +1,48 @@
 """Per-worker usage records (model, tokens, time) and read-only aggregation for tuning."""
 import datetime as dt
+import json
 from pathlib import Path
 from . import config, gitops, state
-from .storage import DevFlowError, now, read_json
+from .storage import DevFlowError, FileLock, atomic_write, json_bytes, now, read_json
 
 SOURCES = ('runtime', 'estimate', 'unavailable')
 ROLES = (*config.ROLES,)
+AUTO_FEATURES = ('level:lite', 'level:lite+review', 'level:full', 'executor:orca', 'review:lite', 'nesting',
+                 'checkpoint', 'template', 'dry_run', 'check_close', 'context_from', 'budget_minutes', 'incident',
+                 'identity_warning')
+DECLARED_FEATURES = ('codegraph', 'context7', 'memory', 'profile_reused', 'profile_saved', 'retro', 'rules')
+COMMANDS = ('cleanup',)  # Only state-changing run-less invocations (cleanup --apply) are logged.
+
+
+def declare(record, name):
+    """Coordinator-declared feature the CLI cannot observe itself."""
+    if name not in DECLARED_FEATURES:
+        raise DevFlowError('Unknown feature; declare one of ' + ', '.join(DECLARED_FEATURES))
+    state.mark_features(record, name)
+    return {'features': record['features']}
+
+
+def note_readonly(data, run_id, name):
+    """Feature use of a read-only helper: kept beside state.json so the run state bytes stay unchanged."""
+    path = state.run_dir(data, run_id) / 'features.json'
+    with FileLock(path.with_suffix('.lock'), 'features'):
+        current = read_json(path) if path.exists() else []
+        if name not in current:
+            atomic_write(path, json_bytes(sorted({*current, name})))
+
+
+def log_command(data, command, flags):
+    """Global usage line for a state-changing run-less command: flag names only, never paths, branches or repositories."""
+    folder = Path(data) / 'usage'
+    if not Path(data).is_dir():
+        return  # Never create the data home just to count a command.
+    line = json.dumps({'command': command, 'flags': sorted(flags), 'at': now()}) + '\n'
+    try:
+        folder.mkdir(exist_ok=True)
+        with (folder / 'commands.jsonl').open('a', encoding='utf-8') as handle:
+            handle.write(line)
+    except OSError:
+        pass  # Usage counting never breaks the command.
 
 
 def entry(value):
@@ -62,20 +99,69 @@ def _identity(repository):
         return None
 
 
-def stats(data, repository=None, all_repos=False, since_days=None):
+def _limit(since_days):
     if since_days is not None and (type(since_days) is not int or since_days <= 0):
         raise DevFlowError('--since needs a positive number of days')
-    limit = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=since_days)) if since_days else None
+    return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=since_days)) if since_days else None
+
+
+def _selected(data, repository, all_repos, limit):
     ours = None if all_repos else _identity(repository)
     if not all_repos and ours is None:
         raise DevFlowError('stats needs a Git repository; use --all for every project')
-    tasks, roles, unmeasured = {}, {}, 0
     for level, record in _records(data):
         if ours and record.get('git_common_dir') != ours and _identity(record.get('repository', '')) != ours:
             continue
         created = record.get('created_at')
         if limit and created and dt.datetime.fromisoformat(created) < limit:
             continue
+        yield level, record
+
+
+def _commands(data, limit):
+    path = Path(data) / 'usage' / 'commands.jsonl'
+    counts = {}
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines() if path.is_file() else []
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            item = json.loads(line)
+            if limit and dt.datetime.fromisoformat(item['at']) < limit:
+                continue
+            bucket = counts.setdefault(item['command'], {'count': 0, 'flags': {}})
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue  # A damaged line never breaks stats.
+        bucket['count'] += 1
+        for flag in item.get('flags') or []:
+            bucket['flags'][flag] = bucket['flags'].get(flag, 0) + 1
+    return counts
+
+
+def features(data, repository=None, all_repos=False, since_days=None):
+    """Which DevFlow features were used in the window (runs, lite records and global commands)."""
+    limit = _limit(since_days)
+    counts = {name: {'runs': 0, 'lite': 0} for name in (*AUTO_FEATURES, *DECLARED_FEATURES)}
+    records = 0
+    for level, record in _selected(data, repository, all_repos, limit):
+        records += 1
+        for name in record.get('features') or []:
+            counts.setdefault(name, {'runs': 0, 'lite': 0})['runs' if level == 'full' else 'lite'] += 1
+    commands = _commands(data, limit) if all_repos else None
+    never = [n for n in (*AUTO_FEATURES, *DECLARED_FEATURES) if not counts[n]['runs'] + counts[n]['lite']]
+    if commands is not None:
+        never += ['command:' + c for c in COMMANDS if c not in commands]
+    return {'scope': 'all repositories' if all_repos else 'current repository', 'since_days': since_days,
+            'records': records, 'features': counts, 'commands': commands, 'never_used': never,
+            'note': 'Counts runs/lite records that used each feature. commands.jsonl is global (not per '
+                    'repository): ' + ('included' if all_repos else 'only included with --all') + '.'}
+
+
+def stats(data, repository=None, all_repos=False, since_days=None):
+    limit = _limit(since_days)
+    tasks, roles, unmeasured = {}, {}, 0
+    for level, record in _selected(data, repository, all_repos, limit):
         key = f"{level}:{record.get('mode')}"
         bucket = tasks.setdefault(key, {'count': 0, 'tokens': 0, 'measured': 0, 'status': {}})
         bucket['count'] += 1

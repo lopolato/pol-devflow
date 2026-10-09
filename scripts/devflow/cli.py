@@ -5,12 +5,12 @@ import json
 import sys
 from pathlib import Path
 import uuid
-from . import adapters, cleanup, config, gitops, lite, metrics, nesting, orca, package, profile, state
+from . import adapters, cleanup, config, gitops, lite, metrics, nesting, orca, package, profile, retro, rules, state
 from .storage import DevFlowError, FileLock, atomic_write, data_home, digest, json_bytes, now, package_root, read_json, safe_id
 
 HELP = {
     'general': 'pol-devflow: error | feature [--lite|--full] [--review] [--plan-only] <description>; optimize [--plan-only] <description>\n'
-               'help [topic] | status [--run ID] | stats [--all] [--since DAYS] | config [show|validate|set] | cleanup [--apply] [--discard BRANCH] [--purge-history]\n'
+               'help [topic] | status [--run ID] | stats [--all] [--since DAYS] [--features] | config [show|validate|set] | cleanup [--apply] [--discard BRANCH] [--purge-history]\n'
                'The skill Coordinator executes workflows through native session tools.\n'
                'The Python CLI provides deterministic support; it is not a standalone LLM agent.',
     'error': 'error [--lite|--full] [--review] [--plan-only] <description>: diagnose, fix and verify the reported defect.',
@@ -30,12 +30,18 @@ HELP = {
               '[--model MODEL] [--effort LEVEL] | --inherit\n'
               'Atomic shared config update; generated-file conflicts cause no config write. '
               'Coordinator model belongs to the main session. Changes affect future runs only.',
-    'stats': 'stats [--all] [--since DAYS]: recorded tokens/time/models per role and task type for this repository '
-             '(or all with --all). Read-only; values that were not recorded are reported as unknown, never estimated.',
+    'stats': 'stats [--all] [--since DAYS] [--features]: recorded tokens/time/models per role and task type for this repository '
+             '(or all with --all). Read-only; values that were not recorded are reported as unknown, never estimated. '
+             '--features counts runs/lite records per DevFlow feature and lists never_used ones '
+             '(global command counts only with --all).',
     'profile': '_profile show | _profile set --input FILE [--repo-file]: verified project commands (setup, test, '
                'test_affected, lint, typecheck, build, run) reused across runs. Stored outside the repository unless '
                '--repo-file; reports stale when dependency/tooling files change.',
-    'help': 'help [error|feature|optimize|lite|status|stats|config|cleanup|profile|orca|help]: no repository reads or writes.',
+    'retro': 'retro [--since DAYS] [--category C]: summary of process self-assessments (read-only). '
+             '_retro add (--run ID | --lite ID) [--owner S] --input FILE records one at the end of a task.',
+    'rules': 'rules [--path P ...] [--status S]: project rules (must_not, requirement, convention) for the given '
+             'paths, marked stale when those paths changed (read-only). _rules add|confirm|remove|import-tests manage them.',
+    'help': 'help [error|feature|optimize|lite|status|stats|config|cleanup|profile|orca|retro|rules|help]: no repository reads or writes.',
     'orca': 'Orca backend: Coordinator reads adapters/orca/README.md and the version-matched runtime guide. '
             '_run start --executor orca keeps the clean current checkout; _orca spec/link/settle/account '
             'bridge development evidence. Read-only waves only; writers remain sequential. '
@@ -46,6 +52,8 @@ HELP = {
 def parser():
     result = argparse.ArgumentParser(prog='pol-devflow', description=HELP['general'], allow_abbrev=False)
     commands = result.add_subparsers(dest='command', required=True)
+    retro.add_parsers(commands)
+    rules.add_parsers(commands)
     help_parser = commands.add_parser('help')
     help_parser.add_argument('topic', nargs='?', default='general', choices=tuple(HELP))
     for mode in state.MODES:
@@ -83,16 +91,18 @@ def parser():
     p = commands.add_parser('stats')
     p.add_argument('--all', action='store_true')
     p.add_argument('--since', type=int)
+    p.add_argument('--features', action='store_true')
     p = commands.add_parser('_profile')
     p.add_argument('action', choices=('show', 'set'))
     p.add_argument('--input')
     p.add_argument('--repo-file', action='store_true')
     p = commands.add_parser('_metrics')
-    p.add_argument('action', choices=('add',))
+    p.add_argument('action', choices=('add', 'feature'))
     p.add_argument('--run')
     p.add_argument('--lite')
     p.add_argument('--owner')
-    p.add_argument('--role', required=True, choices=config.ROLES)
+    p.add_argument('--name')
+    p.add_argument('--role', choices=config.ROLES)
     p.add_argument('--model')
     p.add_argument('--tokens', type=int)
     p.add_argument('--duration-ms', type=int)
@@ -156,6 +166,8 @@ def parser():
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--author-name')
     p.add_argument('--author-email')
+    p.add_argument('--max-workers', type=int)
+    p.add_argument('--max-tokens', type=int)
     p = commands.add_parser('_orca')
     p.add_argument('action', choices=('spec', 'link', 'settle', 'account'))
     p.add_argument('--run', required=True)
@@ -203,10 +215,13 @@ def run_command(args, ctx):
     if (getattr(args, 'can_delegate', False) or getattr(args, 'parent_task', None) or getattr(args, 'native_nesting_evidence', None) is not None
             or getattr(args, 'native_max_workers', None) is not None) and args.action != 'task':
         raise DevFlowError('Nesting flags only apply to task')
+    if (getattr(args, 'max_workers', None) is not None or getattr(args, 'max_tokens', None) is not None) and args.action != 'start':
+        raise DevFlowError('--max-workers/--max-tokens only apply to start; raise them with update budget')
     if args.action == 'start':
         require(args.mode, args.request, args.owner, args.runtime)
         if not args.criterion:
             raise DevFlowError('Supply acceptance --criterion before starting implementation')
+        budget = state.make_budget(getattr(args, 'max_workers', None), getattr(args, 'max_tokens', None))
         selected = config.load(config.active_path(data, root))
         if args.executor == 'orca':
             if not (data / 'config/models.yaml').exists():
@@ -225,13 +240,16 @@ def run_command(args, ctx):
         run = state.create(data, preflight['workspace'], args.mode, args.request, selected,
                             branch=info['branch'], revision=info['base_revision'], criteria=args.criterion,
                             workspace=info['workspace'], runtime=args.runtime, owner=args.owner,
-                            capabilities=adapters.capabilities(args.runtime))
+                            capabilities=adapters.capabilities(args.runtime), budget=budget)
         run['executor'] = args.executor
         if args.executor == 'orca':
             run['capabilities'].update(executor='orca', parallel_dispatch=True, parallel_writes=False,
                                        runtime_authority='Orca active Dispatch')
+        identity = gitops.identity(run['workspace'])
+        state.mark_features(run, 'level:full', args.executor == 'orca' and 'executor:orca',
+                            identity.get('warning') and 'identity_warning')
         state.save(data, run, 'execution backend selected')
-        return run | {'identity': gitops.identity(run['workspace'])}
+        return run | {'identity': identity}
     require(args.run)
     if args.action == 'show':
         return state.status(data, run_id=args.run)
@@ -258,12 +276,15 @@ def run_command(args, ctx):
                 'still checks settlement, identity, live Git, reviewer artifact and duplicate findings.'}
     require(args.owner)
     if args.action in ('template', 'check-close'):
-        # Read-only helpers: no lock, no state write.
+        # Read-only helpers: no run lock, no state write (feature use goes to the features.json sidecar).
         run = state.load(data, args.run)
         state.require_owner(run, args.owner)
+        metrics.note_readonly(data, args.run, args.action.replace('-', '_'))
         if args.action == 'check-close':
             blockers = close_blockers(run)
-            return {'can_complete': not blockers, 'blockers': blockers}
+            # Token budget is partial data: a warning, never a blocker.
+            return {'can_complete': not blockers, 'blockers': blockers, 'budget': state.budget_summary(run),
+                    'budget_warnings': state.budget_warnings(run)}
         require(args.task_id)
         task = next((t for t in run['tasks'] if t['task_id'] == args.task_id), None)
         if not task:
@@ -303,6 +324,7 @@ def run_command(args, ctx):
                                      args.author_name, args.author_email)
             live = gitops.inspect(run['workspace'])
             run['current_revision'], run['workspace_dirty'] = live['revision'], live['dirty']
+            state.mark_features(run, 'checkpoint')
             state.save(data, run, 'checkpoint')
             return {'revision': revision, 'workspace_dirty': live['dirty'], 'branch': run['branch']}
         if args.action == 'refresh':
@@ -312,6 +334,7 @@ def run_command(args, ctx):
             run['current_revision'], run['workspace_dirty'] = live['revision'], live['dirty']
         elif args.action == 'task':
             require(args.role, args.objective)
+            state.check_worker_budget(run)
             live = gitops.inspect(run['workspace'])
             if live['branch'] != run['branch'] or live['revision'] != run['current_revision']:
                 raise DevFlowError('Refresh/reconcile the candidate before assignment')
@@ -389,6 +412,8 @@ def run_command(args, ctx):
                 task['relevant_context'].append({'previous_assignment': args.replaces,
                                                 'result': known[args.replaces]['result']})
             run['tasks'].append(task)
+            state.mark_features(run, getattr(args, 'can_delegate', False) and 'nesting', bool(sources) and 'context_from',
+                                args.budget_minutes is not None and 'budget_minutes')
             state.save(data, run, 'task assigned')
             return task
         elif args.action == 'record':
@@ -433,6 +458,7 @@ def run_command(args, ctx):
                     raise DevFlowError('Reviewer result must include review.verdict (passed, changes_required or incomplete)')
             state.append_findings({'findings': copy.deepcopy(run['findings'])}, result['findings'])
             if args.dry_run:
+                metrics.note_readonly(data, args.run, 'dry_run')
                 return {'valid': True, 'dry_run': True, 'task_id': task['task_id'], 'role': task['role'],
                         'status': result['status'], 'candidate_revision': candidate,
                         'workspace_dirty': live['dirty'], 'files_changed': sorted(actual),
@@ -459,7 +485,8 @@ def run_command(args, ctx):
             require(args.input)
             update = read_json(args.input)
             allowed = {'phase', 'criteria_results', 'validations', 'required_checks', 'review_required',
-                       'findings', 'measurement', 'decisions', 'questions', 'next_action', 'workers', 'incident'}
+                       'findings', 'measurement', 'decisions', 'questions', 'next_action', 'workers', 'incident',
+                       'budget'}
             if not isinstance(update, dict) or set(update) - allowed:
                 raise DevFlowError('Update contains unsupported fields; snapshots/identity/review cannot be overridden')
             if run.get('executor') == 'orca' and update.get('workers'):
@@ -493,8 +520,11 @@ def run_command(args, ctx):
                 if findings[:len(previous)] != previous:
                     raise DevFlowError('Cannot remove/modify findings; use resolve with current validation evidence')
                 state.append_findings(run, findings[len(previous):])
+            if 'budget' in update:
+                state.raise_budget(run, update.pop('budget'))
             if 'incident' in update:
                 state.record_incident(run, update.pop('incident'))
+                state.mark_features(run, 'incident')
             run.update(update)
         elif args.action == 'resolve':
             require(args.input)
@@ -540,7 +570,7 @@ def dispatch(args, ctx):
     if args.command == 'status':
         return state.status(data, run_id=args.run, repository=ctx.repo)
     if args.command == 'stats':
-        return metrics.stats(data, ctx.repo, args.all, args.since)
+        return (metrics.features if args.features else metrics.stats)(data, ctx.repo, args.all, args.since)
     if args.command == '_profile':
         if args.action == 'show':
             if args.input or args.repo_file:
@@ -551,6 +581,15 @@ def dispatch(args, ctx):
     if args.command == '_metrics':
         if bool(args.run) == bool(args.lite):
             raise DevFlowError('Use exactly one of --run or --lite')
+        if args.action == 'feature':
+            require(args.name)
+            if any(getattr(args, n) is not None for n in ('role', 'model', 'tokens', 'duration_ms', 'tool_uses',
+                                                          'source', 'task_id', 'worker_id', 'phase')):
+                raise DevFlowError('_metrics feature takes only --name')
+        else:
+            require(args.role)
+            if args.name:
+                raise DevFlowError('--name only applies to _metrics feature')
         value = {'role': args.role, 'model': args.model, 'tokens': args.tokens, 'duration_ms': args.duration_ms,
                  'tool_uses': args.tool_uses, 'source': args.source, 'task_id': args.task_id,
                  'worker_id': args.worker_id, 'phase': args.phase}
@@ -559,15 +598,15 @@ def dispatch(args, ctx):
             with state.RunLock(data, args.run, args.owner):
                 run = state.load(data, args.run)
                 state.require_owner(run, args.owner)
-                item = metrics.add(run, value)
-                state.save(data, run, 'usage recorded')
+                item = metrics.declare(run, args.name) if args.action == 'feature' else metrics.add(run, value)
+                state.save(data, run, 'feature declared' if args.action == 'feature' else 'usage recorded')
                 return item
         path = data / 'lite' / (safe_id(args.lite) + '.json')
         with FileLock(path.with_suffix('.lock'), args.owner or 'metrics'):
             record = read_json(path)
             if record.get('kind') != 'lite' or (record.get('coordinator_id') and record['coordinator_id'] != args.owner):
                 raise DevFlowError('Lite ownership mismatch; pass the Coordinator --owner used at start')
-            item = metrics.add(record, value)
+            item = metrics.declare(record, args.name) if args.action == 'feature' else metrics.add(record, value)
             atomic_write(path, json_bytes(record))
             return item
     if args.command == 'cleanup':
@@ -627,17 +666,20 @@ def dispatch(args, ctx):
                   'git_common_dir': gitops.common_dir(info['workspace']),
                   'branch': info['branch'], 'base_revision': info['base_revision'],
                   'previous_branch': info['previous_branch'], 'mode': args.mode, 'request': args.request,
-                  'created_at': now()}
+                  'created_at': now(), 'features': []}
         record.update(executor=args.executor, coordinator_id=args.owner, task_id=lite_id,
                       workspace=info['workspace'], status='pending', review_required=args.review,
                       untracked_preserved=info.get('untracked_preserved', []))
+        identity = gitops.identity(info['workspace'])
+        state.mark_features(record, 'level:lite+review' if args.review else 'level:lite',
+                            args.executor == 'orca' and 'executor:orca', identity.get('warning') and 'identity_warning')
         # Minimal ownership record so cleanup only ever touches branches DevFlow created.
         atomic_write(data / 'lite' / (lite_id + '.json'), json_bytes(record))
         next_action = 'Delegate to pol-lite with this branch; never commit to the previous branch'
         if args.review:
             next_action += ('; after its commits run _lite review-diff and record an independent review '
                             'with _lite review before reporting')
-        return record | {'workspace': info['workspace'], 'identity': gitops.identity(info['workspace']),
+        return record | {'workspace': info['workspace'], 'identity': identity,
                          'session_model_hint': lite.SESSION_MODEL_HINT, 'next_action': next_action}
     if args.command == 'config':
         if args.action != 'set' and any((args.runtime, args.role, args.model, args.effort, args.inherit)):
@@ -711,6 +753,10 @@ def dispatch(args, ctx):
         if not args.workers_confirmed_stopped:
             raise DevFlowError('Verify workers are stopped before removing a child worktree')
         return gitops.remove_integrated_child(args.workspace, args.child_workspace)
+    for module in (retro, rules):
+        out = module.dispatch(args, ctx)
+        if out is not None:
+            return out
     raise DevFlowError('Unknown command')
 
 

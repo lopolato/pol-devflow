@@ -1,92 +1,100 @@
-# Pol DevFlow 1.0.16
+# Pol DevFlow 1.0.17
 
-La 1.0.15 permite delegación nativa optativa de un nivel adicional en full, tanto Codex como Claude Code, con grants explícitos, scopes de lectura contenidos, dos plazas por padre y un máximo de cuatro workers activos. Los hijos son solo lectura; el Coordinator registra cada hijo antes del lanzamiento y recoge su resultado para el padre.
+Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optimize` con workers, Git seguro, pruebas reales y revisión independiente. El Coordinator es la sesión del chat; el CLI Python solo aporta operaciones deterministas (estado, Git, evidencia), no es un agente.
 
-La 1.0.14 prefiere la delegación nativa verificada del entorno actual: subagentes de Codex en Codex y Agent en Claude Code, también cuando la sesión está abierta en Orca. Una petición explícita de workers Orca conserva ese backend. La gestión de un workspace Orca sigue correspondiendo a Orca; ejecución de workers y propiedad del workspace son decisiones distintas. Una ejecución activa conserva el backend con el que empezó. Se mantienen perfiles de modelos, scopes y revisión independiente.
+## Cómo se usa en 2 minutos
 
-La 1.0.13 añade prevalidación de resultados sin registrar entregas, plantillas con estados canónicos, tiempos de pared observados y salida UTF-8. Admite rutas Git literales como `[action]` y confirma el borrado asíncrono de Orca antes de darlo por terminado; los errores de cleanup devuelven un código de salida no cero. El flujo prioriza revisión y pruebas dirigidas antes de comprobaciones finales costosas. El arranque incierto de Orca se reconcilia sin duplicar encargos; esta skill no modifica el runtime de Orca.
+1. **Instalar** (Python 3.11+ y Git): `python scripts/install.py --runtime all` (o `codex` / `claude`). Abrir una sesión nueva.
+2. **Pedir trabajo** (en Codex, `$pol-devflow` en lugar de `/pol-devflow`):
 
-Skill portable para Codex y Claude Code. El paquete contiene instrucciones, helpers y tests; la instalación es una operación explícita independiente de su creación. La 1.0.12 añade el nivel lite+review (`--lite --review`), `code_map` con `--context-from` para no releer código entre workers y la sugerencia de modelo de sesión. La 1.0.11 añade codegraph optativo y aísla DevFlow de las skills de proceso de otros plugins. La 1.0.10 separa incidencia reportada de defecto corregido, añade presupuesto por worker (`overdue_tasks`), identidad Git antes del primer commit, `template`/`record --dry-run`/`check-close`, cleanup de contenido equivalente con otro SHA y residuos, y lite con untracked ajenos. La versión 1.0.8 añade métricas de uso (`stats`), perfil de comandos verificados, olas de lectura también en native, tests afectados durante correcciones y menos llamadas por checkpoint. La 1.0.7 hizo la memoria optativa por proyecto, aligeró lite y limitó cleanup al repositorio actual. Mantiene el adaptador Orca Build, olas de lectura, Context7 y lite proporcional. Conserva memoria en Git e historial en cleanup; Engram queda fuera.
+   ```text
+   /pol-devflow error --lite el total del carrito no suma el envío
+   /pol-devflow feature --plan-only exportar pedidos a CSV
+   /pol-devflow cleanup
+   ```
 
-## Requisitos
+3. **Elegir nivel** (sin flag, el Coordinator propone uno y lo justifica):
 
-Python 3.11+ y Git. La configuración predeterminada usa JSON válido como YAML y no necesita dependencias adicionales. YAML de bloques requiere PyYAML opcional.
+   | Nivel | Cuándo | Qué hace |
+   |---|---|---|
+   | `--lite` | Cambio claro, ≤3 archivos de producto con tests, sin migraciones, datos ni concurrencia | Rama en la carpeta actual; trabaja `pol-lite` con modelo ligero |
+   | `--lite --review` | Lo anterior, pero toca permisos/seguridad o reglas de negocio, o pides review | Igual, más `pol-reviewer` independiente sobre el diff |
+   | `--full` | Todo lo demás; `optimize` siempre | Worktree propio, roles según necesidad, review y `check-close` |
 
-## Comandos de la skill
+   Lite no usa worktree (`node_modules` y `.env` siguen disponibles); si la tarea crece, pasa a full sobre la misma rama.
 
-`error`, `feature`, `optimize`, `help`, `status`, `stats`, `config`, `cleanup`. `--plan-only` analiza sin escribir. El CLI Python es soporte determinista, no un agente LLM autónomo. Coordinator permanece en el chat principal y ocho perfiles worker se eligen según necesidad.
+4. **Modelo de la sesión**: el Coordinator usa el modelo con que abriste el chat y es quien más turnos hace. Para lite y tareas rutinarias, uno ligero (Sonnet / Luna); para full complejo, uno fuerte (Opus / gpt-6.1-sol). Los workers usan su modelo configurado.
 
-## Modo lite
+`--plan-only` analiza y presenta el plan sin escribir nada. DevFlow nunca hace push, merge a main ni despliegue sin que lo pidas.
 
-`error` y `feature` aceptan `--lite` o `--full`, y `--review`; sin flag de nivel, el Coordinator propone uno. Lite es para cambios claros de hasta 3 archivos de producto, incluidos tests, sin migraciones, datos ni concurrencia. Si además tocan permisos/seguridad o reglas de negocio relevantes, o se pide review, el nivel es lite+review: `pol-reviewer` revisa el diff de la rama lite y no hay `done` sin review vigente. Crea una rama nueva en la carpeta actual (sin worktree, así `node_modules` y `.env` siguen disponibles) y delega todo el trabajo en el worker `pol-lite`, que usa el modelo ligero de models.yaml. Si la tarea deja de ser pequeña, pasa a full sobre la misma rama. Optimize siempre es full.
+## Comandos
 
-## Modelo de la sesión
+`error`, `feature`, `optimize`, `help`, `status`, `stats`, `retro`, `rules`, `config`, `cleanup`. Detalle en [comandos](core/commands.md).
 
-El Coordinator usa el modelo con el que se abrió la sesión y es quien hace más turnos. Para lite y tareas rutinarias conviene un modelo ligero (p. ej. Sonnet en Claude, Luna en Codex); para full complejo, uno fuerte (Opus / gpt-6.1-sol). Los workers usan siempre sus modelos configurados.
+- `status [--run ID]`: estado, tareas vencidas (`overdue_tasks`) y presupuesto del run.
+- `stats [--all] [--since DAYS] [--features]`: tokens, tiempo y modelos registrados por rol (lo no reportado figura como desconocido, nunca estimado). `--features` cuenta qué funciones se usan y lista `never_used`, candidatas a recortar.
+- `retro [--since DAYS] [--category C]`: resumen de las autoevaluaciones de proceso que el Coordinator guarda al cerrar.
+- `rules [--path P ...]`: reglas del proyecto (must_not, requirement, convention) y las que afectan a unas rutas. Tras corregir un bug se propone una `must_not` ligada a su test de regresión (inferida hasta que la confirmes); se consultan antes de asignar writers y las comprueba el Reviewer. Se guardan fuera del repositorio salvo `--repo-file` (`.devflow/rules.json`). Reglas y retro son optativas y nunca bloquean.
+- Presupuesto en full: `--max-workers N` / `--max-tokens N` al iniciar. Superar workers se rechaza hasta que apruebes subirlo; superar tokens solo se avisa.
+- `cleanup [--apply] [--remote R] [--discard RAMA] [--purge-history]`: ver [Limpieza](#limpieza).
 
-## Estadísticas y perfil del proyecto
+## Perfil, codegraph y Context7
 
-`stats [--all] [--since DAYS]` muestra tokens, tiempo y modelos por rol y tipo de tarea, solo con valores que el runtime reportó; lo demás figura como desconocido. El perfil (`_profile`) guarda fuera del repositorio los comandos verificados (test, test_affected, lint, build…) para no redescubrirlos en cada run y marca `stale` cuando cambian dependencias o tooling. `.devflow/project.json` solo se crea si el usuario lo pide.
+El perfil (`_profile`) guarda fuera del repositorio los comandos verificados (test, test_affected, lint, build…) para no redescubrirlos y marca `stale` si cambian dependencias o tooling; `.devflow/project.json` solo si lo pides. Si el proyecto tiene `.codegraph/codegraph.db`, los roles lo consultan antes de abrir archivos (DevFlow nunca crea el índice). [Context7](core/rules/technical-context.md) se usa solo ante dudas de API/versión. Durante DevFlow no se activan skills de proceso de otros plugins (p. ej. superpowers).
 
-## Orca y Context7
+## Orca
 
-Con executor orca, elegido por petición explícita o tras comprobar que falta delegación nativa, leer [adaptador Orca](adapters/orca/README.md) y la guía de su ejecutable. La presencia de una sesión Orca no sustituye la API nativa de Codex o Claude cuando esta está disponible. Orca gobierna actividad, Tasks/Dispatches, mensajes y settlement; DevFlow conserva criterios, scopes y evidencia. El puente _orca genera specs y registra link/settle/account, sin lanzar procesos ni autenticar recibos. En full, --executor orca crea rama en el checkout limpio actual, sin worktree adicional. Writers secuenciales y olas de lectura independientes, como en native. Modelos elegidos por usuario o herencia, comprobando selección efectiva.
-
-Antes de completar, registrar resultado y decisión de reutilización/retención/liberación y comprobar el Run real. El helper no reemplaza worker-release. Cleanup no detiene workers: registra propiedad y puede retirar worktrees Orca mediante su runtime después de verificar inactividad, integración y confirmación del alcance. La versión inicial del puente es local; ejecución remota y writers paralelos en worktrees separados quedan pendientes.
-
-Si el proyecto tiene índice de codegraph (`.codegraph/codegraph.db`), los roles que leen código lo consultan antes de abrir archivos; DevFlow nunca crea el índice. Durante DevFlow no se activan skills de proceso de otros plugins (p. ej. superpowers). [Context7](core/rules/technical-context.md) se consulta ante dudas de API/versión: comprobar dependencia instalada, obtener extractos pertinentes y compartirlos en contextos. Si falta o no cubre esa versión, usar documentación oficial/evidencia local. No instalar MCPs ni añadir Engram incidentalmente. Plan-only no escribe ni crea recursos Orca.
+Se prefiere la delegación nativa comprobada (subagentes Codex, Agent en Claude Code), también dentro de Orca. Workers Orca solo por petición explícita o falta de API nativa: ver [adaptador Orca](adapters/orca/README.md). Orca gobierna actividad, Dispatches y settlement; DevFlow conserva criterios, scopes y evidencia. Un run no cambia de executor en silencio.
 
 ## Limpieza
 
-`cleanup` lista las ramas, worktrees y ejecuciones que dejó DevFlow e indica cuáles están mezcladas en main. `cleanup --apply` retira solo lo mezclado y limpio, tras una confirmación del alcance mostrado. `--remote REMOTO` incluye el remoto explícitamente; `--orca-idle-confirmed` registra la comprobación de actividad previa para worktrees Orca propios. Sin estas opciones no se presume borrado remoto ni cierre de workers. Una rama sin mezclar solo se borra con `--discard RAMA`, confirmada una por una. Nunca toca ramas que DevFlow no creó.
+`cleanup` lista ramas, worktrees y ejecuciones que dejó DevFlow en este repositorio y cuáles están mezcladas. `--apply` retira solo lo mezclado y limpio tras confirmar el alcance; `--remote` incluye el remoto explícitamente; una rama sin mezclar solo se borra con `--discard RAMA`. Conserva por defecto registros y evidencia; `--purge-history` exige su propia confirmación. Nunca toca ramas que DevFlow no creó.
 
 ## Documentación y memoria
 
-La memoria es optativa por proyecto: se activa si el repositorio ya tiene `docs/devflow/`, si sus instrucciones (CLAUDE.md, AGENTS.md o README) la piden o si el usuario la solicita. Sin activación, DevFlow no crea `docs/devflow/`, PROJECT/DECISIONS/STATUS ni informes en el repositorio; el resumen va al informe final del chat y solo se corrige la documentación existente que el cambio deje incorrecta. Puede ofrecer crear la base una vez, nunca en silencio.
+Optativa por proyecto: se activa si existe `docs/devflow/`, si las instrucciones del proyecto la piden o si la solicitas. Sin activación no se escribe memoria ni informes en el repositorio; el resumen va al chat. Ver [reglas de memoria](core/rules/project-memory.md).
 
-Con memoria activada, construye contexto a partir de documentación, código, configuración y pruebas; distingue hechos, inferencias y dudas, reutiliza documentos existentes y registra revisión/cobertura para comprobar cambios al continuar. Cada tarea full guarda un informe clasificado como feature, bugfix, optimization, documentation o bootstrap. En lite el worker escribe solo un informe breve y, como mucho, 2 documentos/memoria del área tocada; el Coordinator no lee las reglas de memoria. Plan-only no escribe memoria.
-
-En tareas concurrentes el índice de memoria referencia registros de revisión por área; preserva evidencia previa y evita sobrescribir la revisión de otra tarea. El informe contiene pruebas y límites; runbook e inventario enlazan la evidencia sin duplicar todo el informe.
-
-Ver [reglas de memoria](core/rules/project-memory.md). El mantenimiento semántico corresponde a Coordinator y workers; los helpers no acreditan por sí solos que se haya leído y entendido el proyecto.
-
-Cleanup conserva por defecto registros y evidencia. `--purge-history` requiere una confirmación específica para eliminarlos; nunca borra documentación versionada del repositorio por esa opción.
-
-## Instalación y actualización
+## Instalación, actualización y mantenimiento
 
 ```text
 python scripts/install.py --runtime all
 python scripts/uninstall.py --runtime all
+python scripts/validate.py [--runtime codex|claude]
 ```
 
-Se puede elegir codex o claude. El instalador actualiza únicamente archivos propios cuyo hash coincide con el manifiesto; ante edición manual, se detiene. Conserva configuración central de modelos, ejecuciones, ramas y worktrees; crea backup transaccional. No modifica config.toml ni settings.json del runtime.
+El instalador actualiza solo archivos propios cuyo hash coincide con el manifiesto (ante edición manual se detiene), conserva configuración de modelos, ejecuciones, ramas y worktrees, y crea backup transaccional. No modifica config.toml ni settings.json. Claude recibe `disable-model-invocation` y `argument-hint` del adaptador; Codex, su política en agents/openai.yaml. No copiar el SKILL.md del ZIP a mano: usar el instalador. `validate.py` sin `--runtime` valida el paquete portable, no la instalación.
 
-El SKILL.md del ZIP es el origen portable. Claude recibe las claves nativas disable-model-invocation y argument-hint del adaptador; Codex recibe su política explícita en agents/openai.yaml. La diferencia de metadatos está documentada y no representa divergencia de workflows.
-
-Al actualizar, el adaptador de Claude conserva una única disable-model-invocation: true incluso si el origen ya tiene metadatos nativos. No sustituir el SKILL.md instalado por el archivo portable del ZIP: usar el instalador.
-
-`python scripts/validate.py` valida el paquete portable, o la instalación completa si se ejecuta desde una skill registrada. Para comprobar explícitamente un runtime instalado desde el paquete, usar `python scripts/validate.py --runtime codex` o `--runtime claude`. La validación de instalación comprueba metadatos nativos y todos los hashes; un healthy del paquete portable no prueba que la instalación mantenga sus restricciones.
+Publicar una versión: `main` está protegida (exige CI verde), así que la versión se prepara en una rama y `scripts/release.py VERSION --push --install` solo etiqueta, publica e instala. Pasos en [PILOTO.md](PILOTO.md#flujo-de-mantenimiento).
 
 ## Modelos
 
 ```text
 $pol-devflow config show
-$pol-devflow config validate
 $pol-devflow config set --runtime codex --role reviewer --model MODELO --effort high
 $pol-devflow config set --runtime claude --role implementer --model MODELO
 $pol-devflow config set --runtime codex --role tester --inherit
 ```
 
-En Orca, sin configuración central ni perfiles gestionados previos, la selección hereda la sesión. Este paquete conserva el preset personal ya elegido; la instalación native usa esa configuración cuando no existe una central. Las actualizaciones locales preservan las preferencias instaladas. Configurar un modelo no prueba acceso real. Cambios afectan a ejecuciones futuras; Coordinator usa el modelo del chat.
+Configurar un modelo no prueba acceso real. Los cambios afectan a ejecuciones futuras (las abiertas conservan su snapshot). En Orca, sin configuración central, se hereda la sesión.
 
 ## Garantías y límites
 
-Scopes contrastados con cambios confirmados, staged, sin stage y archivos nuevos no ignorados. Comprobaciones obligatorias no reducibles; hallazgos conservados y resolución por evidencia actual. Fixer requiere clave estable, con tres ciclos por problema. Inicio exige runtime explícito. Reviewer recibe diff completo con hash. Coordinator no puede acreditarse como reviewer independiente.
-
-El helper comprueba identidades declaradas, no las autentica; Coordinator verifica la asociación con sesiones nativas. Los archivos ignorados y modificaciones externas a Git no son una frontera de seguridad del helper. El worktree conserva contenido versionado; preparar dependencias/configuración y acceso según el proyecto antes de ejecutar tests. Carpetas cortas reducen el riesgo de rutas largas sin garantizar compatibilidad de todos los proyectos Windows.
-
-Ver [procedimiento](core/coordinator.md), [entorno Git](core/rules/git-worktrees.md) y VERIFICATION.md para evidencia y limitaciones. La carga efectiva de agentes y su funcionamiento con un proyecto real requieren una prueba en sesión nativa.
+Scopes contrastados con cambios confirmados, staged, sin stage y archivos nuevos no ignorados. Comprobaciones obligatorias no reducibles y hallazgos conservados. Fixer con clave estable y tres ciclos por problema. Reviewer recibe el diff completo con hash; el Coordinator nunca cuenta como reviewer independiente. El helper compara identidades declaradas, no las autentica. Archivos ignorados y cambios externos a Git no son frontera de seguridad. Ver [procedimiento](core/coordinator.md), [entorno Git](core/rules/git-worktrees.md) y VERIFICATION.md.
 
 ## Licencia
 
 MIT. Ver [LICENSE](LICENSE).
+
+## Historial
+
+- 1.0.17: presupuesto por run, registro de funciones usadas (`stats --features`), retro de proceso, reglas del proyecto y `scripts/release.py`.
+- 1.0.16: subdelegación comprobada en Claude Code y espera obligatoria de los hijos.
+- 1.0.15: subdelegación nativa optativa de un nivel en full (grants, solo lectura, máx. 4 workers activos).
+- 1.0.14: delegación nativa preferida también dentro de Orca; executor fijo por run.
+- 1.0.13: prevalidación de resultados, plantillas canónicas, tiempos de pared, salida UTF-8 y borrado Orca confirmado.
+- 1.0.12: nivel lite+review, `code_map` con `--context-from` y sugerencia de modelo de sesión.
+- 1.0.11: codegraph optativo y aislamiento de skills de proceso de otros plugins.
+- 1.0.10: incidencia frente a defecto, presupuesto por worker, identidad Git, `check-close` y cleanup de contenido equivalente.
+- 1.0.9: commits con finales de línea CRLF.
+- 1.0.8: métricas (`stats`), perfil de comandos verificados, olas de lectura en native, CI y evals.
+- 1.0.7: memoria optativa por proyecto, lite más ligero y cleanup limitado al repositorio actual.

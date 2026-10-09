@@ -20,12 +20,12 @@ Usar un proyecto pequeño y propio, con Git limpio y en main. Abrir una sesión 
 - Modelos que aparecen en el resumen final (configurado y efectivo).
 - Tiempo y tokens: tras cada tarea, `/pol-devflow stats` muestra lo registrado por rol.
 - Si se guardó el perfil del proyecto (`_profile show`) y si la segunda tarea reutilizó sus comandos sin redescubrirlos.
-- Reglas o pasos que parecieron sobrar o que el Coordinator se saltó.
+- Reglas o pasos que parecieron sobrar o que el Coordinator se saltó (`/pol-devflow retro` resume las retros guardadas).
 - Preguntas que hizo y si eran necesarias.
 
 ## Después del piloto: candidatos a recortar
 
-Revisar con las notas si se usan de verdad; lo que no se use, hacerlo optativo o quitarlo:
+Revisar con las notas y con `/pol-devflow stats --features --all` (`never_used`) si se usan de verdad; lo que no se use, hacerlo optativo o quitarlo:
 
 - Adaptador Orca y su accounting (si no se usa Orca a diario).
 - Borrado remoto en cleanup (`--remote`).
@@ -35,14 +35,19 @@ Revisar con las notas si se usan de verdad; lo que no se use, hacerlo optativo o
 
 ## Flujo de mantenimiento
 
-Este repositorio es la fuente única. Para cambiar algo:
+Este repositorio es la fuente única. `main` está protegida en GitHub: exige los checks de CI (ubuntu/windows × Python 3.11/3.12), también para administradores, así que nada se confirma directamente en main.
 
 ```text
-editar → python -m unittest discover -s tests → python scripts/validate.py
-git commit → python scripts/install.py --runtime all
-python scripts/validate.py --runtime claude
-python scripts/validate.py --runtime codex
+git switch -c feat/X                      # editar en una rama
+python -m unittest discover -s tests      # y python scripts/validate.py
+# versión: scripts/devflow/__init__.py, sección "## X.Y.Z" en VERIFICATION.md,
+#          primer título "# Pol DevFlow X.Y.Z" en README.md y línea en su Historial
+git push -u origin feat/X                 # esperar CI verde
+git switch main && git merge --ff-only feat/X && git push origin main
+python scripts/release.py X.Y.Z --push --install
 ```
+
+`scripts/release.py` no edita ni confirma nada: comprueba main limpia y al día con origin, versión mayor que el último tag y ya declarada en `__init__.py`, VERIFICATION y README; verifica los checks de GitHub del commit con `gh` si está autenticado (`--skip-ci-check` para omitirlo); ejecuta tests y `validate.py` (`--skip-tests` avisa de que CI debe estar en verde); crea el tag anotado `vX.Y.Z`; con `--push` publica main y el tag de forma atómica, y con `--install` instala en ambos runtimes y valida cada instalación. `--dry-run` muestra cada paso sin cambiar nada. `--evals` ejecuta además `evals/check_claude_nesting.py` y el escenario `lite-small-bug` (gastan tokens; pide confirmación o `--yes`).
 
 Modelos: `python scripts/devflow.py config set ...` (regenera los agentes; no editarlos a mano).
 
