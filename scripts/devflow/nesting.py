@@ -11,12 +11,13 @@ MAX_GLOBAL_WORKERS = 4
 
 
 def _check_capacity(run, limit, replacement=None):
-    active = [t for t in run.get('tasks', []) if t.get('status') in ('pending', 'active')]
-    if replacement:
-        active = [t for t in active if t.get('task_id') != replacement]
-    active_workers = [w for w in run.get('workers', [])
-                      if w.get('status') not in ('done', 'cancelled_confirmed')]
-    if max(len(active), len(active_workers)) >= limit:
+    reservations = {('task', t['task_id']) for t in run.get('tasks', [])
+                    if t.get('status') in ('pending', 'active') and t['task_id'] != replacement}
+    for index, worker in enumerate(run.get('workers', [])):
+        if worker.get('status') not in ('done', 'cancelled_confirmed'):
+            key = ('task', worker['task_id']) if worker.get('task_id') else ('worker', worker.get('worker_id', index))
+            reservations.add(key)
+    if len(reservations) >= limit:
         raise DevFlowError('Native worker reservation limit reached')
 
 
@@ -45,7 +46,9 @@ def scope_contains(parent_workspace, parent_scope, child_workspace, child_scope)
     base = Path(parent_workspace).resolve()
     parent = _safe_scope(parent_workspace, parent_scope)
     child = _safe_scope(child_workspace, child_scope)
-    return child == parent or (_directory(parent_scope) and child.is_relative_to(parent))
+    if child == parent:
+        return not _directory(child_scope) or _directory(parent_scope)
+    return _directory(parent_scope) and child.is_relative_to(parent)
 
 
 def validate_assignment(run, role, write_scope, read_scope, can_delegate=False,
@@ -56,6 +59,8 @@ def validate_assignment(run, role, write_scope, read_scope, can_delegate=False,
     if not nesting_flags:
         if run.get('executor') == 'orca' and run.get('nesting'):
             raise DevFlowError('Nested tasks require the native executor')
+        if run.get('nesting'):
+            _check_capacity(run, run['nesting']['max_workers'], replacement)
         return None
     if run.get('executor') == 'orca':
         raise DevFlowError('Nesting flags are unavailable with executor Orca')
@@ -179,11 +184,6 @@ def result_blockers(run, task, result):
             child_workers.discard(None)
             if child_workers & set(run.get('authors', [])):
                 blockers.append('Reviewer cannot pass when a child is an author on the candidate')
-    if task.get('parent_task_id') and result.get('status') == 'done':
-        root = task.get('family_root') or task['parent_task_id']
-        if any(t.get('parent_task_id') == root and t.get('status') not in ('done', 'cancelled')
-               for t in run.get('tasks', [])):
-            blockers.append('Delegation family still has an unfinished child assignment')
     return blockers
 
 
@@ -195,10 +195,14 @@ def task_blockers(run, task):
     if unfinished:
         blockers.append('Delegating parent cannot finish before every child is done: ' + ', '.join(unfinished))
     if task.get('parent_task_id'):
-        family_root = task.get('family_root') or task['parent_task_id']
-        descendants = [t for t in run.get('tasks', []) if t.get('parent_task_id') == family_root]
-        if any(t.get('status') not in ('done', 'cancelled') for t in descendants):
-            blockers.append('Delegation family still has an unfinished child assignment')
+        parent = next((t for t in run.get('tasks', []) if t['task_id'] == task['parent_task_id']), None)
+        if parent is None:
+            blockers.append('Child task has no recorded parent')
+        elif (task.get('depth') != 2 or parent.get('depth') != 1
+              or not parent.get('delegation', {}).get('enabled')
+              or task.get('delegation', {}).get('enabled') or task.get('write_scope')
+              or task.get('role') not in LEAF_ROLES):
+            blockers.append('Child task has invalid delegation metadata')
     if task.get('role') == 'reviewer' and children:
         review = (task.get('result') or {}).get('review') or {}
         child_workers = {(child.get('result') or {}).get('worker_id') for child in children}

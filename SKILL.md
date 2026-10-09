@@ -27,7 +27,7 @@ Aceptar `error|feature [--lite|--full] [--review] [--plan-only] <descripción>`,
 ## Invariantes
 
 - Preguntar por decisiones relevantes de producto, arquitectura o propiedad; inspeccionar código para resolver detalles técnicos.
-- Los roles son responsabilidades; usar el recorrido mínimo. Native y Orca permiten olas independientes de lectura en una misma revisión limpia; un writer espera a que no quede tarea pendiente y no se solapa con lectores. Los workers no redelegan.
+- Los roles son responsabilidades; usar el recorrido mínimo. Native y Orca permiten olas independientes de lectura en una misma revisión limpia; un writer espera a que no quede tarea pendiente y no se solapa con lectores. Solo lectores con un grant registrado pueden subdelegar según core/rules/subdelegation.md; las hojas no redelegan.
 - Los encargos identifican propietario, alcance, dependencias y revisión candidata. Todas las respuestas vuelven al Coordinator.
 - Preparar el entorno del workspace según [Git](core/rules/git-worktrees.md) antes de asignar cambios o tests.
 - Comprobar la identidad Git antes del primer commit; no reescribir commits revisados. Confirmar únicamente rutas propias en la rama de tarea; preservar cambios preexistentes y trabajo pendiente. Push, despliegue y merge a main/master requieren una petición que los incluya.

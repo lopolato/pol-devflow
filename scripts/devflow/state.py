@@ -325,6 +325,8 @@ def validate_result(task, result):
             raise DevFlowError(f'Worker changed a path outside write_scope: {changed}')
     if task['role'] == 'reviewer' and result['files_changed']:
         raise DevFlowError('Reviewer must not change product code/tests')
+    if task.get('parent_task_id') and 'review' in result:
+        raise DevFlowError('A helper cannot issue the independent review verdict')
     for index, check in enumerate(result['validation']):
         try:
             validate_check(check)
@@ -347,6 +349,7 @@ def validate_result(task, result):
             raise DevFlowError('Only a task with an explicit delegation grant may report subdelegation_trace')
         if (not isinstance(trace, dict) or set(trace) != {'child_task_ids', 'summary'}
                 or not isinstance(trace['child_task_ids'], list)
+                or not all(isinstance(item, str) and item for item in trace['child_task_ids'])
                 or not isinstance(trace['summary'], str) or not trace['summary'].strip()):
             raise DevFlowError('subdelegation_trace needs child_task_ids and a nonempty summary')
         if len(set(trace['child_task_ids'])) != len(trace['child_task_ids']):

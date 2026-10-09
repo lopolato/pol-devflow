@@ -2,7 +2,7 @@
 
 ## Topología de comunicación
 
-El Coordinator es el punto central. Los workers reciben encargos de él y le devuelven resultados. No se transfieren trabajo ni cambian la tarea de otro worker directamente en V1.
+El Coordinator es el punto central. Los workers reciben encargos de él y le devuelven resultados. Los encargos planos no transfieren trabajo entre workers. Con un grant nativo registrado, un padre puede lanzar auxiliares de lectura siguiendo [subdelegación](subdelegation.md); Coordinator registra cada hijo y conserva la autoridad del estado.
 
 ~~~text
 Usuario ↔ Coordinator
