@@ -14,6 +14,8 @@ Resumir modo, fase, estado, workspace, rama, revisión, tareas (y `overdue_tasks
 
 ## stats
 
+`_metrics add --activity implementation|tests|review|reporting|coordination|waiting` clasifica una duración explícita conocida. `stats.activities` agrega solo esas mediciones; no calcula tiempo de cómputo ni total y conserva como desconocidos registros legacy sin actividad.
+
 `stats [--all] [--since DAYS]` agrega tokens, tiempo y modelos registrados por rol y tipo de tarea del repositorio actual (`--all`: todos). Es de lectura; lo no registrado figura como desconocido, nunca estimado. Los datos de uso proceden de `usage` en resultados y de `_metrics add`. Los campos `wall_clock_elapsed_seconds`, `wall_clock_known` y `avg_wall_clock_elapsed_seconds` resumen intervalos conocidos de tareas; incluyen espera/coordinación y no representan consumo ni duración total de tareas solapadas. Los comandos verificados del proyecto proceden del helper interno `_profile` ([procedimiento](coordinator.md)). `stats --features [--all] [--since DAYS]` cuenta, por función (nivel, executor, review lite, nesting, checkpoint, template, check_close, context_from, presupuesto, incidencia, codegraph, context7, memoria, perfil, retro, rules…), los runs y registros lite que la usaron y devuelve `never_used`: candidatas a recortar. Los comandos sin run que cambian algo (`cleanup --apply`) se cuentan solo con `--all`, porque su registro es global y sin rutas; las consultas no registran nada.
 
 ## retro y rules

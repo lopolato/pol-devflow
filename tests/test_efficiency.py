@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from devflow import metrics, storage
+from devflow import metrics, state, storage
 
 
 class EfficiencyTests(unittest.TestCase):
@@ -59,9 +59,103 @@ class EfficiencyTests(unittest.TestCase):
         self.assertEqual(item['source'], 'unavailable')
         self.assertEqual(metrics.entry({'role': 'lite', 'tokens': 10})['source'], 'runtime')
         for bad in ({'role': 'nobody'}, {'role': 'tester', 'tokens': -1}, {'role': 'tester', 'tokens': 1.5},
-                    {'role': 'tester', 'cost': 3}, {'role': 'tester', 'model': 'a\nb'}):
+                    {'role': 'tester', 'cost': 3}, {'role': 'tester', 'model': 'a\nb'},
+                    {'role': 'tester', 'activity': 'compute'}):
             with self.assertRaises(storage.DevFlowError):
                 metrics.entry(bad)
+
+    def test_activity_stats_keep_unknown_legacy_and_wall_clock_separate(self):
+        run = self.start()
+        self.cli('_metrics', 'add', '--run', run['run_id'], '--owner', 'co', '--role', 'implementer',
+                 '--activity', 'implementation', '--duration-ms', '1200')
+        self.cli('_metrics', 'add', '--run', run['run_id'], '--owner', 'co', '--role', 'tester',
+                 '--activity', 'tests', '--duration-ms', '800')
+        legacy = metrics.entry({'role': 'reviewer', 'duration_ms': 50})
+        legacy.pop('activity')
+        record = state.load(self.data, run['run_id'])
+        record.setdefault('metrics', []).append(legacy)
+        state.save(self.data, record, 'legacy metric fixture')
+        stats = metrics.stats(self.data, self.repo)
+        self.assertEqual(stats['activities']['implementation']['duration_ms'], 1200)
+        self.assertEqual(stats['activities']['tests']['duration_known'], 1)
+        self.assertEqual(stats['total_tokens_known'], 0)
+        self.assertNotIn('review', stats['activities'])
+        self.assertEqual(stats['roles']['reviewer']['duration_ms'], 50)
+
+    def test_prepare_result_expands_only_explicit_brief_facts_and_checks_ids(self):
+        run = self.start()
+        task = self.cli('_run', 'task', '--run', run['run_id'], '--owner', 'co', '--role', 'implementer',
+                        '--objective', 'small task')
+        brief = {'run_id': run['run_id'], 'task_id': task['task_id'], 'worker_id': 'worker-real',
+                 'role': 'implementer', 'status': 'done', 'summary': 'No product changes',
+                 'observed_revision': run['base_revision'], 'result_revision': None}
+        prepared = self.cli('_run', 'prepare-result', '--run', run['run_id'], '--task-id', task['task_id'],
+                            '--input', self.write('brief.json', brief))
+        self.assertEqual(prepared['worker_id'], 'worker-real')
+        self.assertEqual(prepared['criteria_results'], [])
+        self.assertEqual(prepared['validation'], [])
+        self.assertNotIn('usage', prepared)
+        self.cli('_run', 'record', '--run', run['run_id'], '--owner', 'co', '--task-id', task['task_id'],
+                 '--brief', '--input', self.write('brief-record.json', brief))
+        bad_id = brief | {'task_id': 'task-wrong'}
+        self.cli('_run', 'prepare-result', '--run', run['run_id'], '--task-id', task['task_id'],
+                 '--input', self.write('bad-id.json', bad_id), ok=False)
+        fabricated = brief | {'criteria_results': [{'criterion': 'invented', 'status': 'passed',
+                                                     'revision': run['base_revision'], 'evidence': 'made up'}]}
+        self.cli('_run', 'prepare-result', '--run', run['run_id'], '--task-id', task['task_id'],
+                 '--input', self.write('fabricated.json', fabricated), ok=False)
+
+    def test_incremental_review_needs_real_independent_coverage_and_keeps_full_diff(self):
+        run = self.start()
+        workspace = Path(run['workspace'])
+        implementer = self.cli('_run', 'task', '--run', run['run_id'], '--owner', 'co', '--role', 'implementer',
+                               '--objective', 'first change', '--write-scope', 'app.py')
+        (workspace / 'app.py').write_text('changed once\n', encoding='utf-8')
+        first_commit = self.cli('_git', 'commit', '--workspace', str(workspace), '--path', 'app.py',
+                                '--message', 'first change')
+        # The worktree is already committed; report it through the assigned write scope.
+        implementation_result = {'schema_version': 1, 'run_id': run['run_id'], 'task_id': implementer['task_id'],
+                                 'worker_id': 'author-one', 'role': 'implementer', 'status': 'done',
+                                 'summary': 'Changed app.py', 'observed_revision': run['base_revision'],
+                                 'result_revision': first_commit['revision'], 'workspace_dirty': False,
+                                 'files_changed': ['app.py'], 'commits': [first_commit['revision']]}
+        self.cli('_run', 'record', '--run', run['run_id'], '--owner', 'co', '--input',
+                 self.write('implementation.json', implementation_result))
+        first_review = self.cli('_run', 'task', '--run', run['run_id'], '--owner', 'co', '--role', 'reviewer',
+                                '--objective', 'full review')
+        review_result = {'schema_version': 1, 'run_id': run['run_id'], 'task_id': first_review['task_id'],
+                         'worker_id': 'reviewer-one', 'role': 'reviewer', 'status': 'done',
+                         'summary': 'Full diff inspected', 'observed_revision': first_commit['revision'],
+                         'result_revision': None, 'workspace_dirty': False,
+                         'review': {'verdict': 'passed', 'coverage': 'All changed paths and error handling inspected'}}
+        self.cli('_run', 'record', '--run', run['run_id'], '--owner', 'co', '--input',
+                 self.write('first-review.json', review_result))
+        second_impl = self.cli('_run', 'task', '--run', run['run_id'], '--owner', 'co', '--role', 'implementer',
+                               '--objective', 'test-only change', '--write-scope', 'test_app.py')
+        (workspace / 'test_app.py').write_text('assert True\n', encoding='utf-8')
+        second_commit = self.cli('_git', 'commit', '--workspace', str(workspace), '--path', 'test_app.py',
+                                 '--message', 'second change')
+        implementation_result = implementation_result | {'task_id': second_impl['task_id'], 'worker_id': 'author-two',
+                                                          'observed_revision': first_commit['revision'],
+                                                          'result_revision': second_commit['revision'],
+                                                          'commits': [second_commit['revision']],
+                                                          'files_changed': ['test_app.py']}
+        self.cli('_run', 'record', '--run', run['run_id'], '--owner', 'co', '--input',
+                 self.write('implementation2.json', implementation_result))
+        self.assertEqual(self.cli('_run', 'show', '--run', run['run_id'])['run']['review']['revision'],
+                         first_commit['revision'])
+        delta_review = self.cli('_run', 'task', '--run', run['run_id'], '--owner', 'co', '--role', 'reviewer',
+                                '--objective', 'review delta', '--review-from', first_review['task_id'])
+        self.assertEqual(delta_review['review_delta']['base_revision'], first_commit['revision'])
+        self.assertEqual(delta_review['review_diff']['base_revision'], run['base_revision'])
+        delta_text = Path(delta_review['review_delta']['path']).read_text(encoding='utf-8')
+        self.assertIn('test_app.py', delta_text)
+        self.assertNotIn('changed once', delta_text)
+        self.assertNotIn('review', delta_review)
+        self.git(workspace, 'reset', '--hard', run['base_revision'])
+        self.cli('_run', 'refresh', '--run', run['run_id'], '--owner', 'co')
+        self.cli('_run', 'task', '--run', run['run_id'], '--owner', 'co', '--role', 'reviewer',
+                 '--objective', 'invalid stale delta', '--review-from', first_review['task_id'], ok=False)
 
     def test_usage_in_result_and_metrics_command_feed_stats(self):
         run = self.start()

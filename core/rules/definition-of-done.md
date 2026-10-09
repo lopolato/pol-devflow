@@ -14,9 +14,9 @@ passed | failed | not_run | not_applicable
 
 La evidencia final se vincula a un commit y un workspace sin modificaciones posteriores relevantes. Si hay cambios después, invalidar y repetir las comprobaciones afectadas.
 
-El Reviewer inspecciona el requisito, los criterios, el diff entre base y versión final y el código relevante. Los handoffs aportan contexto, pero no sustituyen la inspección independiente.
+La primera review inspecciona el diff completo y el código relevante. Una review posterior puede usar `--review-from TASK_ID` solo si una review registrada con veredicto `passed` o `changes_required` incluye cobertura explícita de un reviewer independiente y su revisión es ancestro Git del candidato. Una review `incomplete` no puede ser fuente. El encargo conserva el artefacto/hash del diff completo y agrega el delta desde esa revisión y los hallazgos pendientes. El Reviewer inspecciona el delta y la cobertura previa; la decisión sigue siendo nueva y explícita. Sin fuente válida, se encarga una review completa.
 
-El encargo reviewer aporta el diff completo en review_diff con ruta absoluta, SHA-256 y revisiones. Claude lo inspecciona con Read; un resumen del Coordinator no equivale al diff. Si falta acceso o evidencia, devolver incomplete. El CLI exige el rol reviewer del encargo y comprueba integridad del artefacto al recibir su resultado.
+El encargo reviewer conserva `review_diff` completo con ruta absoluta, SHA-256 y revisiones, y puede añadir `review_delta` con sus propios hashes/revisiones. El Reviewer inspecciona el artefacto indicado en el encargo; un resumen del Coordinator no equivale al diff. Si falta acceso o evidencia, devolver incomplete. Toda review incluye `review.coverage` explícita. El CLI comprueba la integridad de los artefactos al recibir el resultado.
 
 Clasificar hallazgos:
 

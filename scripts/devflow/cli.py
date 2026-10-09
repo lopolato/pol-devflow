@@ -111,6 +111,7 @@ def parser():
     p.add_argument('--task-id')
     p.add_argument('--worker-id')
     p.add_argument('--phase')
+    p.add_argument('--activity', choices=metrics.ACTIVITIES)
     p = commands.add_parser('config')
     p.add_argument('action', nargs='?', default='show', choices=('show', 'validate', 'set'))
     p.add_argument('--runtime', choices=config.RUNTIMES)
@@ -133,7 +134,7 @@ def parser():
     p = commands.add_parser('_run')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
     p.add_argument('action', choices=('start', 'show', 'refresh', 'checkpoint', 'task', 'record', 'update', 'resolve',
-                                      'attempt', 'close', 'claim', 'template', 'validate-result', 'check-close'))
+                                      'attempt', 'close', 'claim', 'template', 'prepare-result', 'validate-result', 'check-close'))
     p.add_argument('--run')
     p.add_argument('--owner')
     p.add_argument('--mode', choices=state.MODES)
@@ -163,7 +164,9 @@ def parser():
     p.add_argument('--native-nesting-evidence')
     p.add_argument('--native-max-workers', type=int)
     p.add_argument('--context-from', action='append', default=[])
+    p.add_argument('--review-from')
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--brief', action='store_true')
     p.add_argument('--author-name')
     p.add_argument('--author-email')
     p.add_argument('--max-workers', type=int)
@@ -204,6 +207,30 @@ def close_blockers(run):
     return blockers + state.completion_blockers(run | {'workspace_dirty': live['dirty']})
 
 
+def prepare_brief_result(run, task, brief):
+    """Expand a factual worker handoff without inferring checks, usage or authorship."""
+    allowed = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision',
+               'result_revision', 'files_inspected', 'commits', 'decisions', 'validation', 'findings',
+               'criteria_results', 'risks', 'out_of_scope', 'questions', 'next_action'}
+    required = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision', 'result_revision'}
+    if not isinstance(brief, dict) or set(brief) - allowed or required - set(brief):
+        raise DevFlowError('Brief result requires explicit run/task/worker identity, role, status, summary, observed_revision and result_revision; only factual evidence fields are accepted')
+    for key, expected in (('run_id', run['run_id']), ('task_id', task['task_id']), ('role', task['role'])):
+        if brief[key] != expected:
+            raise DevFlowError(f'Brief {key} does not match the recorded assignment')
+    live = gitops.inspect(task['workspace'])
+    result = state.empty_result(task, brief['worker_id'])
+    for field in ('status', 'summary', 'observed_revision', 'result_revision', 'files_inspected', 'commits',
+                  'decisions', 'validation', 'findings', 'criteria_results', 'risks', 'out_of_scope', 'questions',
+                  'next_action'):
+        if field in brief:
+            result[field] = brief[field]
+    result['workspace_dirty'] = live['dirty']
+    result['files_changed'] = sorted(gitops.changed_paths(task['workspace'], task['candidate_revision']))
+    state.validate_result(task, result)
+    return result
+
+
 def run_command(args, ctx):
     data, root, repo = Path(ctx.data_dir), Path(ctx.root), Path(ctx.repo)
     if args.dry_run and args.action != 'record':
@@ -212,6 +239,10 @@ def run_command(args, ctx):
         raise DevFlowError('--budget-minutes only applies to task')
     if getattr(args, 'context_from', None) and args.action != 'task':
         raise DevFlowError('--context-from only applies to task')
+    if getattr(args, 'review_from', None) and args.action != 'task':
+        raise DevFlowError('--review-from only applies to task')
+    if getattr(args, 'brief', False) and args.action != 'record':
+        raise DevFlowError('--brief only applies to record')
     if (getattr(args, 'can_delegate', False) or getattr(args, 'parent_task', None) or getattr(args, 'native_nesting_evidence', None) is not None
             or getattr(args, 'native_max_workers', None) is not None) and args.action != 'task':
         raise DevFlowError('Nesting flags only apply to task')
@@ -253,6 +284,13 @@ def run_command(args, ctx):
     require(args.run)
     if args.action == 'show':
         return state.status(data, run_id=args.run)
+    if args.action == 'prepare-result':
+        require(args.input, args.task_id)
+        run = state.load(data, args.run)
+        task = next((t for t in run['tasks'] if t['task_id'] == args.task_id), None)
+        if not task:
+            raise DevFlowError('No matching assignment for --task-id')
+        return prepare_brief_result(run, task, read_json(args.input))
     if args.action == 'validate-result':
         # Worker preflight: schema/assignment only, before Orca settlement. No locks or writes.
         require(args.input)
@@ -265,9 +303,12 @@ def run_command(args, ctx):
         blockers = nesting.result_blockers(run, task, result)
         if blockers:
             raise DevFlowError('; '.join(blockers))
-        if task['role'] == 'reviewer' and (not isinstance(result.get('review'), dict)
-                or result['review'].get('verdict') not in ('passed', 'changes_required', 'incomplete')):
-            raise DevFlowError('review.verdict must be passed, changes_required or incomplete')
+        if task['role'] == 'reviewer':
+            review = result.get('review')
+            if (not isinstance(review, dict)
+                    or review.get('verdict') not in ('passed', 'changes_required', 'incomplete')
+                    or not isinstance(review.get('coverage'), str) or not review['coverage'].strip()):
+                raise DevFlowError('Reviewer result needs review.verdict and explicit nonempty review.coverage')
         if result.get('usage') is not None:
             metrics.entry({**result['usage'], 'role': task['role'], 'task_id': task['task_id'],
                            'worker_id': result['worker_id']})
@@ -350,6 +391,8 @@ def run_command(args, ctx):
                 raise DevFlowError('Replacement must reference an unfinished recorded assignment')
             if args.replaces and args.correction_key and args.correction_key != known[args.replaces].get('correction_key'):
                 raise DevFlowError('Replacement cannot change its inherited correction key')
+            if args.review_from and args.role != 'reviewer':
+                raise DevFlowError('--review-from only applies to reviewer assignments')
             replacing = known.get(args.replaces) if args.replaces else None
             parent_task_id = getattr(args, 'parent_task', None)
             if replacing and replacing.get('parent_task_id'):
@@ -407,6 +450,38 @@ def run_command(args, ctx):
                 atomic_write(path, content)
                 task['review_diff'] = {'path': str(path.resolve()), 'sha256': digest(content),
                                        'base_revision': run['base_revision'], 'revision': run['current_revision']}
+                if args.review_from:
+                    source = known.get(args.review_from)
+                    prior = (source or {}).get('result') or {}
+                    coverage = (prior.get('review') or {}).get('coverage')
+                    prior_revision = ((source or {}).get('review_diff') or {}).get('revision')
+                    if not source or source.get('role') != 'reviewer' or not isinstance(prior, dict):
+                        raise DevFlowError('--review-from must name a recorded reviewer assignment')
+                    if (prior.get('status') != 'done' or (prior.get('review') or {}).get('verdict') not in ('passed', 'changes_required')
+                            or not isinstance(coverage, str) or not coverage.strip()):
+                        raise DevFlowError('--review-from requires a completed non-incomplete review with explicit coverage')
+                    if prior_revision != (prior.get('result_revision') or prior.get('observed_revision')):
+                        raise DevFlowError('Previous review coverage revision is inconsistent')
+                    source_index = run['tasks'].index(source)
+                    prior_authors = {run.get('coordinator_id')}
+                    prior_authors.update(t['result'].get('worker_id') for t in run['tasks'][:source_index]
+                                         if t.get('result') and t['result'].get('files_changed'))
+                    reviewer_id = prior.get('worker_id')
+                    if not reviewer_id or reviewer_id in prior_authors:
+                        raise DevFlowError('--review-from must be an independent review recorded before later authors')
+                    gitops.git(run['workspace'], 'merge-base', '--is-ancestor', prior_revision,
+                               run['current_revision'])
+                    delta = gitops.git(run['workspace'], 'diff', '--no-ext-diff', '--no-textconv',
+                                       '--binary', '--full-index', prior_revision, run['current_revision'], '--')
+                    delta_content = (delta + '\n').encode('utf-8')
+                    delta_path = state.run_dir(data, args.run) / 'review-inputs' / (task['task_id'] + '.delta.diff')
+                    atomic_write(delta_path, delta_content)
+                    task['review_delta'] = {'path': str(delta_path.resolve()), 'sha256': digest(delta_content),
+                                            'base_revision': prior_revision, 'revision': run['current_revision']}
+                    pending = [f for f in run.get('findings', []) if not f.get('resolved')]
+                    task['review_from'] = args.review_from
+                    task['relevant_context'].append({'prior_independent_review': args.review_from,
+                                                     'coverage': coverage, 'findings_pending': pending})
             if args.replaces:
                 task['replaces'] = args.replaces
                 task['relevant_context'].append({'previous_assignment': args.replaces,
@@ -419,6 +494,12 @@ def run_command(args, ctx):
         elif args.action == 'record':
             require(args.input)
             result = read_json(args.input)
+            if getattr(args, 'brief', False):
+                require(args.task_id)
+                task = next((t for t in run['tasks'] if t['task_id'] == args.task_id), None)
+                if not task:
+                    raise DevFlowError('No matching assignment for --task-id')
+                result = prepare_brief_result(run, task, result)
             task = next((t for t in run['tasks'] if t['task_id'] == result.get('task_id')), None)
             if not task:
                 raise DevFlowError('Result has no matching assignment')
@@ -456,6 +537,11 @@ def run_command(args, ctx):
                     raise DevFlowError('Reviewer diff artifact missing/modified; reassign review')
                 if not isinstance(review, dict) or review.get('verdict') not in ('passed', 'changes_required', 'incomplete'):
                     raise DevFlowError('Reviewer result must include review.verdict (passed, changes_required or incomplete)')
+                if not isinstance(review.get('coverage'), str) or not review['coverage'].strip():
+                    raise DevFlowError('Reviewer result needs explicit nonempty review.coverage')
+                delta_artifact = task.get('review_delta')
+                if delta_artifact and digest(Path(delta_artifact['path']).read_bytes()) != delta_artifact['sha256']:
+                    raise DevFlowError('Reviewer delta artifact missing/modified; reassign review')
             state.append_findings({'findings': copy.deepcopy(run['findings'])}, result['findings'])
             if args.dry_run:
                 metrics.note_readonly(data, args.run, 'dry_run')
@@ -584,7 +670,7 @@ def dispatch(args, ctx):
         if args.action == 'feature':
             require(args.name)
             if any(getattr(args, n) is not None for n in ('role', 'model', 'tokens', 'duration_ms', 'tool_uses',
-                                                          'source', 'task_id', 'worker_id', 'phase')):
+                                                          'source', 'task_id', 'worker_id', 'phase', 'activity')):
                 raise DevFlowError('_metrics feature takes only --name')
         else:
             require(args.role)
@@ -592,7 +678,7 @@ def dispatch(args, ctx):
                 raise DevFlowError('--name only applies to _metrics feature')
         value = {'role': args.role, 'model': args.model, 'tokens': args.tokens, 'duration_ms': args.duration_ms,
                  'tool_uses': args.tool_uses, 'source': args.source, 'task_id': args.task_id,
-                 'worker_id': args.worker_id, 'phase': args.phase}
+                 'worker_id': args.worker_id, 'phase': args.phase, 'activity': args.activity}
         if args.run:
             require(args.owner)
             with state.RunLock(data, args.run, args.owner):

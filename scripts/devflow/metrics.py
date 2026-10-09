@@ -6,6 +6,7 @@ from . import config, gitops, state
 from .storage import DevFlowError, FileLock, atomic_write, json_bytes, now, read_json
 
 SOURCES = ('runtime', 'estimate', 'unavailable')
+ACTIVITIES = ('implementation', 'tests', 'review', 'reporting', 'coordination', 'waiting')
 ROLES = (*config.ROLES,)
 AUTO_FEATURES = ('level:lite', 'level:lite+review', 'level:full', 'executor:orca', 'review:lite', 'nesting',
                  'checkpoint', 'template', 'dry_run', 'check_close', 'context_from', 'budget_minutes', 'incident',
@@ -48,8 +49,8 @@ def log_command(data, command, flags):
 def entry(value):
     """Validate one usage record; unknown numbers stay None instead of being invented."""
     if not isinstance(value, dict) or set(value) - {'role', 'model', 'tokens', 'duration_ms', 'tool_uses',
-                                                    'source', 'task_id', 'worker_id', 'phase'}:
-        raise DevFlowError('Usage accepts role, model, tokens, duration_ms, tool_uses, source, task_id, worker_id, phase')
+                                                    'source', 'task_id', 'worker_id', 'phase', 'activity'}:
+        raise DevFlowError('Usage accepts role, model, tokens, duration_ms, tool_uses, source, task_id, worker_id, phase, activity')
     if value.get('role') not in ROLES:
         raise DevFlowError('Usage needs a DevFlow role')
     for name in ('tokens', 'duration_ms', 'tool_uses'):
@@ -63,9 +64,13 @@ def entry(value):
     source = value.get('source') or ('runtime' if value.get('tokens') is not None else 'unavailable')
     if source not in SOURCES:
         raise DevFlowError('Usage source must be runtime, estimate or unavailable')
+    activity = value.get('activity')
+    if activity is not None and activity not in ACTIVITIES:
+        raise DevFlowError('Usage activity must be one of: ' + ', '.join(ACTIVITIES))
     return {'role': value['role'], 'model': value.get('model'), 'tokens': value.get('tokens'),
             'duration_ms': value.get('duration_ms'), 'tool_uses': value.get('tool_uses'), 'source': source,
             'task_id': value.get('task_id'), 'worker_id': value.get('worker_id'), 'phase': value.get('phase'),
+            'activity': activity,
             'at': now()}
 
 
@@ -160,7 +165,7 @@ def features(data, repository=None, all_repos=False, since_days=None):
 
 def stats(data, repository=None, all_repos=False, since_days=None):
     limit = _limit(since_days)
-    tasks, roles, unmeasured = {}, {}, 0
+    tasks, roles, activities, unmeasured = {}, {}, {}, 0
     for level, record in _selected(data, repository, all_repos, limit):
         key = f"{level}:{record.get('mode')}"
         bucket = tasks.setdefault(key, {'count': 0, 'tokens': 0, 'measured': 0, 'status': {}})
@@ -189,6 +194,13 @@ def stats(data, repository=None, all_repos=False, since_days=None):
             if item.get('duration_ms') is not None:
                 role['duration_ms'] += item['duration_ms']
                 role['duration_known'] += 1
+            activity = item.get('activity')
+            if activity in ACTIVITIES:
+                bucket = activities.setdefault(activity, {'calls': 0, 'duration_ms': 0, 'duration_known': 0})
+                bucket['calls'] += 1
+                if item.get('duration_ms') is not None:
+                    bucket['duration_ms'] += item['duration_ms']
+                    bucket['duration_known'] += 1
             model = item.get('model') or 'unknown'
             role['models'][model] = role['models'].get(model, 0) + 1
     for role in roles.values():
@@ -198,11 +210,15 @@ def stats(data, repository=None, all_repos=False, since_days=None):
         bucket['avg_tokens_measured'] = bucket['tokens'] // bucket['measured'] if bucket['measured'] else None
         bucket['avg_wall_clock_elapsed_seconds'] = (round(bucket['wall_clock_elapsed_seconds'] /
             bucket['wall_clock_known'], 3) if bucket['wall_clock_known'] else None)
+    for bucket in activities.values():
+        bucket['avg_duration_ms'] = bucket['duration_ms'] // bucket['duration_known'] if bucket['duration_known'] else None
     total = sum(r['tokens'] for r in roles.values())
     for role in roles.values():
         role['share'] = round(role['tokens'] / total, 3) if total else None
     return {'scope': 'all repositories' if all_repos else 'current repository', 'since_days': since_days,
             'tasks': tasks, 'roles': dict(sorted(roles.items(), key=lambda kv: -kv[1]['tokens'])),
+            'activities': dict(sorted(activities.items())),
             'total_tokens_known': total, 'tasks_without_metrics': unmeasured,
             'note': 'Only recorded usage is counted; unavailable values are never estimated. Wall-clock '
-                    'elapsed includes waiting, coordination and checks, not agent compute; overlapping runs are not additive.'}
+                    'elapsed includes waiting, coordination and checks, not agent compute; overlapping runs are not additive. '
+                    'Activity durations include only explicit known measurements and are not added into total time.'}

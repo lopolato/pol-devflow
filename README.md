@@ -1,4 +1,6 @@
-# Pol DevFlow 1.0.17
+# Pol DevFlow 1.0.18
+
+La 1.0.18 admite entregas breves que el Coordinator prepara y registra en una pasada con los mismos guards, reviews delta ligadas a cobertura independiente y ancestros Git, y métricas opcionales por actividad. Las pautas priorizan pruebas/review de lectura en paralelo sobre el candidato limpio, regresión exacta antes del fix y suite completa una vez al final.
 
 Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optimize` con workers, Git seguro, pruebas reales y revisión independiente. El Coordinator es la sesión del chat; el CLI Python solo aporta operaciones deterministas (estado, Git, evidencia), no es un agente.
 
@@ -88,6 +90,7 @@ MIT. Ver [LICENSE](LICENSE).
 ## Historial
 
 - 1.0.17: presupuesto por run, registro de funciones usadas (`stats --features`), retro de proceso, reglas del proyecto y `scripts/release.py`.
+- 1.0.18: entrega breve con guards, review delta ligada a cobertura/ancestro, pautas de pruebas seguras y métricas por actividad.
 - 1.0.16: subdelegación comprobada en Claude Code y espera obligatoria de los hijos.
 - 1.0.15: subdelegación nativa optativa de un nivel en full (grants, solo lectura, máx. 4 workers activos).
 - 1.0.14: delegación nativa preferida también dentro de Orca; executor fijo por run.

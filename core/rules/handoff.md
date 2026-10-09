@@ -54,6 +54,8 @@ Coordinator añade el worker_id estable y conserva su asociación con la sesión
 
 Al recibir, el worker comprueba que rutas y revisión coinciden. Si falta información material o encuentra una versión inesperada, informa antes del trabajo dependiente. La comprobación de recepción no requiere una ronda de mensajes ceremonial cuando todo es correcto.
 
+El worker puede devolver una entrega breve en línea con run_id, task_id, worker_id real, role, status, summary, observed_revision, result_revision explícito (también puede ser null), tests/validation y findings. El Coordinator la registra directamente con `_run record --brief --run ID --owner SESSION --task-id T --input BRIEF`; el helper completa solo campos conocidos de la asignación, listas vacías y `files_changed` observado en Git. `_run prepare-result --run ID --task-id T --input BRIEF` permite inspeccionar la normalización sin escribir estado. Ambos exigen identidad/revisión explícitas y mantienen los guards normales de record; no inventan criterios aprobados, uso, commits ni independencia. Si el runtime reporta tokens/duración, el Coordinator los agrega por separado.
+
 ## Resultado obligatorio
 
 ~~~yaml
@@ -86,7 +88,7 @@ Las listas vacías y next_action pueden omitirse (valen []/''). files_changed se
 
 `done` significa que terminó el encargo del worker, no que DevFlow completo haya terminado. Si hay cambios sin commit, identificarlos y no presentar `result_revision` como una descripción completa del workspace.
 
-`criteria_results[].status` admite passed/failed/not_run; `validation[].status`, passed/failed/not_run/not_applicable; `review.verdict`, passed/changes_required/incomplete. Partir del esqueleto del encargo y prevalidar con `_run validate-result --run ID --input RESULT_FILE` antes del envío; si el rol no puede escribir un archivo, Coordinator guarda y prevalida el JSON recibido. Corregir el formato sin borrar claims ni blockers. La prevalidación es de lectura y no sustituye record, Git, revisión o settlement.
+`criteria_results[].status` admite passed/failed/not_run; `validation[].status`, passed/failed/not_run/not_applicable; `review.verdict`, passed/changes_required/incomplete. Para la entrega larga se puede partir del esqueleto y prevalidar con `_run validate-result --run ID --input RESULT_FILE`. Para una entrega breve, Coordinator usa `record --brief` directamente; la prevalidación no sustituye los guards de record, Git, revisión o settlement.
 
 Cada elemento de validación incluye procedimiento, resultado, versión y evidencia. Cada pregunta explica la decisión requerida y el trabajo que depende de ella.
 
