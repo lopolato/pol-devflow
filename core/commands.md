@@ -10,11 +10,11 @@ Usar `python <skill>/scripts/devflow.py <argumentos>`. `--data-dir <ruta>` fija 
 
 `status [--run ID]` consulta estado y contrasta Git. Usar el run del chat si se conoce; en otro caso buscar por proyecto. Una ejecución se selecciona, varias se enumeran y ninguna indica ausencia de estado.
 
-Resumir modo, fase, estado, workspace, rama, revisión, tareas (y `overdue_tasks`), workers, validaciones, review, fecha registrada, bloqueos y siguiente acción. Actividad registrada no prueba actividad nativa actual. HEAD cambiado o workspace dirty impiden afirmar vigencia de evidencia anterior. En Orca resumir también IDs de Run/Task/Dispatch, settlement y accounting registrados; comprobar actividad real con el runtime solo cuando corresponda, sin fingirla a partir del JSON. Status no reanuda ni reescribe estado; corrupción se informa como error.
+Resumir modo, fase, estado, workspace, rama, revisión, tareas (y `overdue_tasks`), workers, validaciones, review, fecha registrada, bloqueos y siguiente acción. Actividad registrada no prueba actividad nativa actual. HEAD cambiado o workspace dirty impiden afirmar vigencia de evidencia anterior. En Orca resumir también IDs de Run/Task/Dispatch, settlement y accounting registrados; comprobar actividad real con el runtime solo cuando corresponda, sin fingirla a partir del JSON. `timing.elapsed_seconds` y `timing.tasks` muestran tiempo de pared desde asignación hasta registro (o hasta ahora si sigue activa); no son tiempo de cómputo y tareas solapadas no se suman. Fechas históricas ausentes figuran como null. Status no reanuda ni reescribe estado; corrupción se informa como error.
 
 ## stats
 
-`stats [--all] [--since DAYS]` agrega tokens, tiempo y modelos registrados por rol y tipo de tarea del repositorio actual (`--all`: todos). Es de lectura; lo no registrado figura como desconocido, nunca estimado. Los datos proceden de `usage` en resultados y de `_metrics add`; los comandos verificados del proyecto, del helper interno `_profile` ([procedimiento](coordinator.md)).
+`stats [--all] [--since DAYS]` agrega tokens, tiempo y modelos registrados por rol y tipo de tarea del repositorio actual (`--all`: todos). Es de lectura; lo no registrado figura como desconocido, nunca estimado. Los datos de uso proceden de `usage` en resultados y de `_metrics add`. Los campos `wall_clock_elapsed_seconds`, `wall_clock_known` y `avg_wall_clock_elapsed_seconds` resumen intervalos conocidos de tareas; incluyen espera/coordinación y no representan consumo ni duración total de tareas solapadas. Los comandos verificados del proyecto proceden del helper interno `_profile` ([procedimiento](coordinator.md)).
 
 ## cleanup
 

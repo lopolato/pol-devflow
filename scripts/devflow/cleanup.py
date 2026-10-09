@@ -3,12 +3,15 @@ import os
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from . import gitops, state
 from .storage import DevFlowError, FileLock, atomic_write, digest, inside, json_bytes, now, read_json, safe_id
 
 PROTECTED = ('main', 'master')
 HISTORY = 'history retained; use --purge-history to explicitly remove it'
+ORCA_REMOVAL_VERIFY_SECONDS = 30.0
+ORCA_REMOVAL_POLL_SECONDS = 0.5
 
 
 def register_workspace(data, repository, value):
@@ -50,14 +53,15 @@ def register_workspace(data, repository, value):
     return record
 
 
-def _orca_workspace(record, action):
+def _orca_workspace(record, action, timeout=None):
     command = record.get('orca_command', 'orca')
     if not isinstance(command, str) or Path(command).stem not in ('orca', 'orca-dev', 'orca-ide'):
         raise DevFlowError('Invalid recorded Orca executable')
     args = [command, 'worktree', 'rm' if action == 'remove' else 'show',
             '--worktree', 'id:' + record['worktree_id'], '--json']
     try:
-        process = subprocess.run(args, capture_output=True, encoding='utf-8', errors='replace', timeout=180)
+        process = subprocess.run(args, capture_output=True, encoding='utf-8', errors='replace',
+                                 timeout=timeout if timeout is not None else 180)
         value = json.loads(process.stdout)
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise DevFlowError('Orca operation did not return verified evidence: ' + str(exc)) from exc
@@ -72,15 +76,43 @@ def _orca_workspace(record, action):
     return {'exists': action != 'remove'}
 
 
+def _verify_orca_removal(repo, ownership):
+    """Orca acknowledges queued deletion; wait for all authorities, never delete as fallback."""
+    deadline = time.monotonic() + ORCA_REMOVAL_VERIFY_SECONDS
+    workspace = ownership['workspace']
+    observed = 'verification unavailable'
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DevFlowError('Workspace removal incomplete after bounded verification; '
+                               'preserved for explicit recovery: ' + observed)
+        try:
+            orca_present = _orca_workspace(ownership, 'show', timeout=min(5.0, remaining))['exists']
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                continue
+            git_present = _norm(workspace) in _worktrees(repo, timeout=min(5.0, remaining))
+            path_present = Path(workspace).exists()
+            observed = f'Orca={orca_present}, Git={git_present}, path={path_present}'
+            if not any((orca_present, git_present, path_present)):
+                return
+        except DevFlowError as exc:
+            # A transport failure is inconclusive, never evidence of successful removal.
+            observed = str(exc)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(ORCA_REMOVAL_POLL_SECONDS, remaining))
+
+
 def _norm(path):
     value = str(Path(path).resolve())
     return value.lower() if os.name == 'nt' else value
 
 
-def _worktrees(repo):
+def _worktrees(repo, timeout=120):
     """Registered worktrees of this repository: normalized path -> checked-out branch."""
     result, current = {}, None
-    for line in gitops.git(repo, 'worktree', 'list', '--porcelain').splitlines():
+    for line in gitops.git(repo, 'worktree', 'list', '--porcelain', timeout=timeout).splitlines():
         if line.startswith('worktree '):
             current = _norm(line[len('worktree '):])
             result[current] = None
@@ -339,14 +371,18 @@ def cleanup(data, repository, apply=False, discard=(), into=None, purge_history=
                         raise DevFlowError('Orca workspace identity missing before deletion; reconcile first')
                 try:
                     if ownership.get('backend') == 'orca':
+                        removal_error = None
                         try:
                             _orca_workspace(ownership, 'remove')
-                        except DevFlowError:
-                            # A lost response is not a failed operation: reconcile both authorities.
-                            if _norm(workspace) in _worktrees(repo) or _orca_workspace(ownership, 'show')['exists']:
-                                raise
-                        if _orca_workspace(ownership, 'show')['exists']:
-                            raise DevFlowError('Orca still lists the workspace after removal')
+                        except DevFlowError as exc:
+                            # A lost response can still have queued removal. Verify, never resend.
+                            removal_error = str(exc)
+                        try:
+                            _verify_orca_removal(repo, ownership)
+                        except DevFlowError as exc:
+                            if removal_error:
+                                raise DevFlowError(str(exc) + '; removal response: ' + removal_error) from exc
+                            raise
                     else:
                         gitops.git(repo, 'worktree', 'remove', workspace)
                     if _norm(workspace) in _worktrees(repo) or Path(workspace).exists():

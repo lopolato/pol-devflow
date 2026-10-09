@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 import uuid
-from . import adapters, cleanup, config, gitops, lite, metrics, orca, package, profile, state
+from . import adapters, cleanup, config, gitops, lite, metrics, nesting, orca, package, profile, state
 from .storage import DevFlowError, FileLock, atomic_write, data_home, digest, json_bytes, now, package_root, read_json, safe_id
 
 HELP = {
@@ -123,7 +123,7 @@ def parser():
     p = commands.add_parser('_run')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
     p.add_argument('action', choices=('start', 'show', 'refresh', 'checkpoint', 'task', 'record', 'update', 'resolve',
-                                      'attempt', 'close', 'claim', 'template', 'check-close'))
+                                      'attempt', 'close', 'claim', 'template', 'validate-result', 'check-close'))
     p.add_argument('--run')
     p.add_argument('--owner')
     p.add_argument('--mode', choices=state.MODES)
@@ -148,6 +148,10 @@ def parser():
     p.add_argument('--path', action='append', default=[])
     p.add_argument('--message')
     p.add_argument('--budget-minutes', type=int)
+    p.add_argument('--can-delegate', action='store_true')
+    p.add_argument('--parent-task')
+    p.add_argument('--native-nesting-evidence')
+    p.add_argument('--native-max-workers', type=int)
     p.add_argument('--context-from', action='append', default=[])
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--author-name')
@@ -196,6 +200,9 @@ def run_command(args, ctx):
         raise DevFlowError('--budget-minutes only applies to task')
     if getattr(args, 'context_from', None) and args.action != 'task':
         raise DevFlowError('--context-from only applies to task')
+    if (getattr(args, 'can_delegate', False) or getattr(args, 'parent_task', None) or getattr(args, 'native_nesting_evidence', None) is not None
+            or getattr(args, 'native_max_workers', None) is not None) and args.action != 'task':
+        raise DevFlowError('Nesting flags only apply to task')
     if args.action == 'start':
         require(args.mode, args.request, args.owner, args.runtime)
         if not args.criterion:
@@ -228,6 +235,27 @@ def run_command(args, ctx):
     require(args.run)
     if args.action == 'show':
         return state.status(data, run_id=args.run)
+    if args.action == 'validate-result':
+        # Worker preflight: schema/assignment only, before Orca settlement. No locks or writes.
+        require(args.input)
+        run = state.load(data, args.run)
+        result = read_json(args.input)
+        task = next((t for t in run['tasks'] if t['task_id'] == result.get('task_id')), None) if isinstance(result, dict) else None
+        if not task:
+            raise DevFlowError('Result task_id must match a recorded assignment')
+        state.validate_result(task, result)
+        blockers = nesting.result_blockers(run, task, result)
+        if blockers:
+            raise DevFlowError('; '.join(blockers))
+        if task['role'] == 'reviewer' and (not isinstance(result.get('review'), dict)
+                or result['review'].get('verdict') not in ('passed', 'changes_required', 'incomplete')):
+            raise DevFlowError('review.verdict must be passed, changes_required or incomplete')
+        if result.get('usage') is not None:
+            metrics.entry({**result['usage'], 'role': task['role'], 'task_id': task['task_id'],
+                           'worker_id': result['worker_id']})
+        return {'valid': True, 'scope': 'schema_and_assignment', 'state_changed': False,
+                'task_id': task['task_id'], 'note': 'Not accepted or recorded. Coordinator record --dry-run '
+                'still checks settlement, identity, live Git, reviewer artifact and duplicate findings.'}
     require(args.owner)
     if args.action in ('template', 'check-close'):
         # Read-only helpers: no lock, no state write.
@@ -240,9 +268,7 @@ def run_command(args, ctx):
         task = next((t for t in run['tasks'] if t['task_id'] == args.task_id), None)
         if not task:
             raise DevFlowError('No matching assignment for --task-id')
-        template = {'schema_version': 1, 'run_id': run['run_id'], 'task_id': task['task_id'], 'role': task['role'],
-                    'worker_id': '', 'status': 'done', 'summary': '', 'observed_revision': task['candidate_revision'],
-                    'result_revision': None, 'workspace_dirty': False, 'files_changed': []}
+        template = state.empty_result(task, task.get('orca', {}).get('worker_id', ''))
         if task['role'] == 'reviewer':
             template['review'] = {'verdict': ''}
         template['usage'] = {'model': None, 'tokens': None, 'duration_ms': None}
@@ -301,14 +327,40 @@ def run_command(args, ctx):
                 raise DevFlowError('Replacement must reference an unfinished recorded assignment')
             if args.replaces and args.correction_key and args.correction_key != known[args.replaces].get('correction_key'):
                 raise DevFlowError('Replacement cannot change its inherited correction key')
+            replacing = known.get(args.replaces) if args.replaces else None
+            parent_task_id = getattr(args, 'parent_task', None)
+            if replacing and replacing.get('parent_task_id'):
+                if parent_task_id not in (None, replacing['parent_task_id']):
+                    raise DevFlowError('Child replacement cannot change its parent')
+                parent_task_id = replacing['parent_task_id']
+            if replacing and replacing.get('delegation', {}).get('enabled'):
+                if not getattr(args, 'can_delegate', False):
+                    raise DevFlowError('Replacing a delegating parent requires a fresh explicit native preflight')
+                if getattr(args, 'native_max_workers', None) != (run.get('nesting') or {}).get('max_workers'):
+                    raise DevFlowError('Parent replacement must inherit the run-wide worker limit')
+                if any(t.get('parent_task_id') == replacing['task_id'] for t in run['tasks']):
+                    raise DevFlowError('Cannot replace a parent after children have been recorded; preserve the delegation tree')
             sources = list(dict.fromkeys(args.context_from))
             for source in sources:
                 if source not in known or known[source].get('result') is None:
                     raise DevFlowError(f'--context-from needs a task with a recorded result: {source}')
+            grant = nesting.validate_assignment(run, args.role, args.write_scope, args.read_scope,
+                                                getattr(args, 'can_delegate', False), parent_task_id, getattr(args, 'native_nesting_evidence', None),
+                                                getattr(args, 'native_max_workers', None), args.replaces)
+            if replacing and replacing.get('delegation', {}).get('enabled') and grant is not None:
+                grant['delegation'] = copy.deepcopy(replacing['delegation'])
             task = state.make_task(run, args.role, args.objective, args.write_scope,
                                    args.read_scope, args.depends, args.task_id,
                                    args.correction_key or (known[args.replaces].get('correction_key') if args.replaces else None),
-                                   args.budget_minutes)
+                                   args.budget_minutes, parent_task_id,
+                                   grant.get('delegation') if grant else None, grant.get('depth', 1) if grant else 1)
+            nesting.apply_assignment(run, task, grant)
+            if replacing:
+                task['replaces'] = replacing['task_id']
+                if replacing.get('family_root'):
+                    task['family_root'] = replacing['family_root']
+                if replacing.get('child_slot'):
+                    task['child_slot'] = replacing['child_slot']
             if args.input:
                 context = read_json(args.input)
                 if (not isinstance(context, dict)
@@ -370,6 +422,9 @@ def run_command(args, ctx):
             if actual != set(result['files_changed']):
                 raise DevFlowError('Result changed-file list does not match actual committed/uncommitted changes')
             review = result.get('review')
+            nesting_blockers = nesting.result_blockers(run, task, result)
+            if nesting_blockers:
+                raise DevFlowError('; '.join(nesting_blockers))
             if task['role'] == 'reviewer':
                 artifact = task.get('review_diff')
                 if not artifact or digest(Path(artifact['path']).read_bytes()) != artifact['sha256']:
@@ -384,6 +439,7 @@ def run_command(args, ctx):
                         'review_verdict': review.get('verdict') if task['role'] == 'reviewer' else None,
                         'usage_recorded': usage is not None, 'state_changed': False}
             task['status'], task['result'] = result['status'], result
+            task['result_recorded_at'] = now()
             if result['status'] == 'done' and task.get('replaces'):
                 previous = next(t for t in run['tasks'] if t['task_id'] == task['replaces'])
                 previous['status'] = 'done'
@@ -659,6 +715,10 @@ def dispatch(args, ctx):
 
 
 def main(argv=None):
+    # Console/redirect encoding must not depend on Windows' legacy codepage or PYTHONIOENCODING.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     context = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     context.add_argument('--data-dir', default=str(data_home()))
     context.add_argument('--repo', default=str(Path.cwd()))
@@ -671,7 +731,7 @@ def main(argv=None):
             print(output)
         else:
             print(json.dumps(output, ensure_ascii=False, indent=2))
-        return 0
+        return 2 if args.command == 'cleanup' and args.apply and isinstance(output, dict) and output.get('errors') else 0
     except (DevFlowError, OSError, ValueError, KeyError, TypeError) as exc:
         print(json.dumps({'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2

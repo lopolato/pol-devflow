@@ -5,7 +5,7 @@ description: Orquestación de desarrollo para error, feature y optimize (con mod
 
 # Pol DevFlow
 
-La sesión actual es el Coordinator. Ejecuta el workflow solicitado y elige los roles necesarios. Orca coordina los workers cuando se solicita o la sesión Orca está comprobada; fuera de ese contexto se usan herramientas nativas. Los helpers Python gestionan evidencia, configuración y Git.
+La sesión actual es el Coordinator. Ejecuta el workflow solicitado y elige los roles necesarios. Preferir delegación nativa comprobada del runtime actual, también dentro de Orca. La gestión de un workspace Orca no determina cómo se ejecutan los workers; una petición explícita de ejecución Orca sí se respeta. Los helpers Python gestionan evidencia, configuración y Git.
 
 ## Enrutar la invocación
 
@@ -14,9 +14,10 @@ Aceptar `error|feature [--lite|--full] [--review] [--plan-only] <descripción>`,
 - Para help/status/stats/config/cleanup, consultar [comandos](core/commands.md) y ejecutar la operación solicitada.
 - Para error o feature, elegir primero el nivel según [lite](core/workflows/lite.md). En lite (o lite+review con `--lite --review`), seguir solo ese workflow y delegar en `pol-lite`; no leer el procedimiento completo salvo que se pase a full.
 - Para desarrollar o planificar en full, consultar el [procedimiento del Coordinator](core/coordinator.md) y el workflow elegido: [error](core/workflows/error.md), [feature](core/workflows/feature.md) u [optimize](core/workflows/optimize.md).
-- Antes de lanzar workers en Orca, leer el [adaptador Orca](adapters/orca/README.md) y cargar la guía de su ejecutable. No sustituirlo por subagentes nativos. Distinguir backend orca de motor codex/claude.
+- Elegir executor `native|orca` antes de iniciar: native si la sesión actual ofrece delegación comprobada ([Codex](adapters/codex/README.md) o [Claude](adapters/claude/README.md)); Orca ante petición explícita o falta de API nativa, con preflight vivo del [adaptador Orca](adapters/orca/README.md). Si ninguno está disponible, informar el bloqueo. No cambiar el executor de un run activo en silencio. `runtime codex|claude` identifica el motor anfitrión, no el executor ni equivalencia entre proveedores.
 - Para dudas de librerías/API, aplicar [Context7 y contexto técnico](core/rules/technical-context.md); consultar por necesidad y compartir evidencia pertinente. Engram queda fuera.
 - Consultar el [contrato del rol](core/agents/coordinator.md) y las reglas aplicables cuando se necesiten.
+- La subdelegación de auxiliares es opt-in solo en full/native y requiere evidencia de preflight nativo en vivo; seguir [subdelegación](core/rules/subdelegation.md).
 - Para continuar, reconciliar estado, Git y actividad nativa antes de asignar tareas.
 - Al cerrar o integrar, aplicar [cierre y entrega](core/rules/delivery.md): separar desarrollo, GitHub, producción y limpieza; registrar propiedad de worktrees Orca y verificar el resultado completo.
 - Al desarrollar o continuar en full, aplicar [documentación y memoria](core/rules/project-memory.md). La memoria e informes en el repositorio son optativos por proyecto (`docs/devflow/` existente, instrucción del proyecto o petición del usuario); sin ella no se crean y el resumen va al chat. Lite no lee esa regla.
@@ -26,7 +27,7 @@ Aceptar `error|feature [--lite|--full] [--review] [--plan-only] <descripción>`,
 ## Invariantes
 
 - Preguntar por decisiones relevantes de producto, arquitectura o propiedad; inspeccionar código para resolver detalles técnicos.
-- Los roles son responsabilidades; usar el recorrido mínimo. Native y Orca permiten olas independientes de lectura en una misma revisión limpia; un writer espera a que no quede tarea pendiente y no se solapa con lectores. Los workers no redelegan.
+- Los roles son responsabilidades; usar el recorrido mínimo. Native y Orca permiten olas independientes de lectura en una misma revisión limpia; un writer espera a que no quede tarea pendiente y no se solapa con lectores. Solo lectores con un grant registrado pueden subdelegar según core/rules/subdelegation.md; las hojas no redelegan.
 - Los encargos identifican propietario, alcance, dependencias y revisión candidata. Todas las respuestas vuelven al Coordinator.
 - Preparar el entorno del workspace según [Git](core/rules/git-worktrees.md) antes de asignar cambios o tests.
 - Comprobar la identidad Git antes del primer commit; no reescribir commits revisados. Confirmar únicamente rutas propias en la rama de tarea; preservar cambios preexistentes y trabajo pendiente. Push, despliegue y merge a main/master requieren una petición que los incluya.

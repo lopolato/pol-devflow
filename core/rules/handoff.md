@@ -2,7 +2,7 @@
 
 ## Topología de comunicación
 
-El Coordinator es el punto central. Los workers reciben encargos de él y le devuelven resultados. No se transfieren trabajo ni cambian la tarea de otro worker directamente en V1.
+El Coordinator es el punto central. Los workers reciben encargos de él y le devuelven resultados. Los encargos planos no transfieren trabajo entre workers. Con un grant nativo registrado, un padre puede lanzar auxiliares de lectura siguiendo [subdelegación](subdelegation.md); Coordinator registra cada hijo y conserva la autoridad del estado.
 
 ~~~text
 Usuario ↔ Coordinator
@@ -46,7 +46,7 @@ deliver_to: coordinator
 
 relevant_context incluye tipo documental, documentos pertinentes, reviewed_revision/cobertura, dudas y las rutas de documentación/informe autorizadas (informe y memoria solo con memoria activada). Consultar [memoria del proyecto](project-memory.md).
 
-Incluir también extractos de [contexto técnico](technical-context.md) pertinentes: librería, versión instalada, library ID, pregunta, fuente/versión consultada, conclusión y límites. `_run task --input CONTEXT_JSON` permite añadir listas relevant_context/shared_contracts/constraints. En Orca añadir mapeo de evidencia DevFlow al intento vivo y seguir el [adaptador](../../adapters/orca/README.md); Task/Dispatch no sustituyen identidad estable de autor.
+Incluir también extractos de [contexto técnico](technical-context.md) pertinentes: librería, versión instalada, library ID, pregunta, fuente/versión consultada, conclusión y límites. `_run task --input CONTEXT_JSON` permite añadir listas relevant_context/shared_contracts/constraints. Con executor orca añadir mapeo de evidencia DevFlow al intento vivo y seguir el [adaptador](../../adapters/orca/README.md); Task/Dispatch no sustituyen identidad estable de autor. Con executor native, vincular identidad y evidencia a la API anfitriona; un workspace gestionado por Orca no crea autoridad Task/Dispatch sobre sus workers.
 
 El contexto relevante enlaza archivos, símbolos, evidencias y resultados previos identificados. No enviar toda la conversación ni todo el repositorio por defecto. El worker puede leer material adicional necesario dentro del alcance.
 
@@ -85,6 +85,8 @@ usage: <opcional: model, tokens, duration_ms, tool_uses, source; solo valores de
 Las listas vacías y next_action pueden omitirse (valen []/''). files_changed se contrasta con Git: omitirlo habiendo cambios se rechaza.
 
 `done` significa que terminó el encargo del worker, no que DevFlow completo haya terminado. Si hay cambios sin commit, identificarlos y no presentar `result_revision` como una descripción completa del workspace.
+
+`criteria_results[].status` admite passed/failed/not_run; `validation[].status`, passed/failed/not_run/not_applicable; `review.verdict`, passed/changes_required/incomplete. Partir del esqueleto del encargo y prevalidar con `_run validate-result --run ID --input RESULT_FILE` antes del envío; si el rol no puede escribir un archivo, Coordinator guarda y prevalida el JSON recibido. Corregir el formato sin borrar claims ni blockers. La prevalidación es de lectura y no sustituye record, Git, revisión o settlement.
 
 Cada elemento de validación incluye procedimiento, resultado, versión y evidencia. Cada pregunta explica la decisión requerida y el trabajo que depende de ella.
 

@@ -79,6 +79,12 @@ def stats(data, repository=None, all_repos=False, since_days=None):
         key = f"{level}:{record.get('mode')}"
         bucket = tasks.setdefault(key, {'count': 0, 'tokens': 0, 'measured': 0, 'status': {}})
         bucket['count'] += 1
+        timing = state.elapsed_timing(record)
+        bucket.setdefault('wall_clock_elapsed_seconds', 0)
+        bucket.setdefault('wall_clock_known', 0)
+        if timing['elapsed_seconds'] is not None:
+            bucket['wall_clock_elapsed_seconds'] += timing['elapsed_seconds']
+            bucket['wall_clock_known'] += 1
         status = record.get('status', 'unknown')
         bucket['status'][status] = bucket['status'].get(status, 0) + 1
         items = record.get('metrics', [])
@@ -104,10 +110,13 @@ def stats(data, repository=None, all_repos=False, since_days=None):
         role['avg_duration_s'] = round(role['duration_ms'] / role['duration_known'] / 1000, 1) if role['duration_known'] else None
     for bucket in tasks.values():
         bucket['avg_tokens_measured'] = bucket['tokens'] // bucket['measured'] if bucket['measured'] else None
+        bucket['avg_wall_clock_elapsed_seconds'] = (round(bucket['wall_clock_elapsed_seconds'] /
+            bucket['wall_clock_known'], 3) if bucket['wall_clock_known'] else None)
     total = sum(r['tokens'] for r in roles.values())
     for role in roles.values():
         role['share'] = round(role['tokens'] / total, 3) if total else None
     return {'scope': 'all repositories' if all_repos else 'current repository', 'since_days': since_days,
             'tasks': tasks, 'roles': dict(sorted(roles.items(), key=lambda kv: -kv[1]['tokens'])),
             'total_tokens_known': total, 'tasks_without_metrics': unmeasured,
-            'note': 'Only recorded usage is counted; unavailable values are never estimated.'}
+            'note': 'Only recorded usage is counted; unavailable values are never estimated. Wall-clock '
+                    'elapsed includes waiting, coordination and checks, not agent compute; overlapping runs are not additive.'}

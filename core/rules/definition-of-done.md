@@ -2,7 +2,7 @@
 
 Con memoria activada, el cierre incluye el informe clasificado y la evaluación de impacto según [memoria del proyecto](project-memory.md); sin ella, el resumen va en el informe final del chat. Verificar documentación afectada frente al código y conservar evidencia de revisión/cobertura. Documentación necesaria pendiente impide completed; no obligar a editar documentos sin impacto.
 
-En Orca, completed exige settlement aceptado y accounting registrado de cada encargo, además de comprobar el Run real y ausencia de terminales reclamables. El CLI verifica consistencia del puente; no autentica recibos ni consulta actividad. Context7/documentación externa aportan contexto versionado, nunca evidencia suficiente de implementación por sí solos.
+Con executor orca, completed exige settlement aceptado y accounting registrado de cada encargo, además de comprobar el Run real y ausencia de terminales reclamables. El CLI verifica consistencia del puente; no autentica recibos ni consulta actividad. Con executor native, contrastar entregas, identidad y actividad con la API anfitriona real; la propiedad Orca del workspace no exige settlement/accounting Orca para esos workers. Context7/documentación externa aportan contexto versionado, nunca evidencia suficiente de implementación por sí solos.
 
 Cada comprobación registra procedimiento o comando, workspace, versión del código y resultado:
 

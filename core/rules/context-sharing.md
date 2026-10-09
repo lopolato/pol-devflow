@@ -27,7 +27,7 @@ No copiar secretos, credenciales ni logs sensibles completos al contexto. Conser
 
 Solo el Coordinator actualiza el estado común. Los workers entregan resultados y evidencias; no reescriben el contexto compartido.
 
-En Orca, ese estado es evidencia de desarrollo, no autoridad de actividad. Registrar executor, orca_run_id y el mapeo por encargo a Task/Dispatch, agente estable, settlement y accounting mediante el [adaptador](../../adapters/orca/README.md). No duplicar workers Orca en la lista de actividad native. Reconciliar siempre con su runtime antes de claim, retry o cierre; el puente guarda declaraciones comprobadas por Coordinator, no autentica el proceso.
+Con executor orca, ese estado es evidencia de desarrollo, no autoridad de actividad. Registrar executor, orca_run_id y el mapeo por encargo a Task/Dispatch, agente estable, settlement y accounting mediante el [adaptador](../../adapters/orca/README.md). No duplicar workers Orca en la lista de actividad native. Reconciliar siempre con su runtime antes de claim, retry o cierre; el puente guarda declaraciones comprobadas por Coordinator, no autentica el proceso. Con executor native, reconciliar actividad e identidades con la API anfitriona real; gestionar el workspace mediante Orca no crea Tasks/Dispatches ni settlement de sus workers.
 
 Guardar estado atómicamente después de asignaciones, resultados, commits, integraciones y validaciones. En V1 solo puede existir un Coordinator activo por ejecución. Un bloqueo local impide continuar simultáneamente desde dos sesiones; antes de retirar uno antiguo se comprueba si sigue activo.
 
