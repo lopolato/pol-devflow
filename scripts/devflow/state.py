@@ -113,6 +113,8 @@ def status(data, run_id=None, repository=None, verify_git=True):
     info = {'run': run, 'worker_activity': 'Recorded state only; live worker activity is not confirmed',
             'last_recorded_at': run['updated_at'], 'evidence_current': 'not_verified',
             'overdue_tasks': overdue_tasks(run), 'timing': elapsed_timing(run)}
+    if run.get('nesting'):
+        info['delegation_tree'] = delegation_tree(run)
     if verify_git:
         try:
             from .gitops import inspect
@@ -138,6 +140,17 @@ def status(data, run_id=None, repository=None, verify_git=True):
         except DevFlowError as exc:
             info['git_verification_error'] = str(exc)
     return info
+
+
+def delegation_tree(run):
+    tasks = run.get('tasks', [])
+    def node(task):
+        return {'task_id': task['task_id'], 'role': task['role'], 'status': task.get('status'),
+                'depth': task.get('depth', 1), 'children': [node(child) for child in tasks
+                    if child.get('parent_task_id') == task['task_id']]}
+    return {'max_workers': (run.get('nesting') or {}).get('max_workers'),
+            'roots': [node(task) for task in tasks if task.get('delegation', {}).get('enabled')
+                      and not task.get('parent_task_id')]}
 
 
 def elapsed_timing(run, at=None):
@@ -220,7 +233,7 @@ def record_incident(run, value):
 
 
 def make_task(run, role, objective, write_scope, read_scope=None, dependencies=None, task_id=None, correction_key=None,
-              budget_minutes=None):
+              budget_minutes=None, parent_task_id=None, delegation=None, depth=1):
     if role not in config.TASK_ROLES or not objective.strip():
         raise DevFlowError('Task needs a worker role and objective')
     if budget_minutes is not None and (type(budget_minutes) is not int or budget_minutes <= 0):
@@ -235,16 +248,23 @@ def make_task(run, role, objective, write_scope, read_scope=None, dependencies=N
     remaining = 3 - len(run['attempts'].get(correction_key, []))
     if remaining <= 0 and role == 'fixer':
         raise DevFlowError('Correction budget exhausted for this logical issue; preserve work and stop')
-    return {'schema_version': 1, 'run_id': run['run_id'], 'task_id': task_id,
+    task = {'schema_version': 1, 'run_id': run['run_id'], 'task_id': task_id,
             'role': role, 'objective': objective, 'original_request': run['request'],
             'acceptance_criteria': run['acceptance_criteria'], 'dependencies': dependencies or [],
             'workspace': run['workspace'], 'branch': run['branch'], 'base_revision': run['base_revision'],
             'candidate_revision': run['current_revision'], 'read_scope': read_scope or [],
             'write_scope': write_scope, 'shared_contracts': [], 'relevant_context': [],
-            'constraints': ['No delegation; deliver to Coordinator; no push or merge main/master'],
+            'constraints': ['Deliver to Coordinator; no push or merge main/master'],
             'expected_validation': list(run['required_checks']), 'remaining_fix_cycles': max(0, remaining),
             'correction_key': correction_key, 'assigned_at': now(), 'budget_minutes': budget_minutes,
-            'deliver_to': 'coordinator', 'status': 'pending', 'result': None}
+            'deliver_to': 'coordinator', 'status': 'pending', 'result': None,
+            'parent_task_id': parent_task_id, 'depth': depth,
+            'delegation': copy.deepcopy(delegation or {'enabled': False})}
+    if task['delegation'].get('enabled'):
+        task['constraints'].append('You may request read-only explorer/debugger/tester child tasks through the Coordinator; do not edit shared run state')
+    else:
+        task['constraints'].append('Do not delegate; deliver your result to the Coordinator')
+    return task
 
 
 def scope_path(workspace, relative):
@@ -321,6 +341,16 @@ def validate_result(task, result):
         validate_finding(finding)
     if 'code_map' in result:
         validate_code_map(task['workspace'], result['code_map'])
+    if 'subdelegation_trace' in result:
+        trace = result['subdelegation_trace']
+        if not task.get('delegation', {}).get('enabled'):
+            raise DevFlowError('Only a task with an explicit delegation grant may report subdelegation_trace')
+        if (not isinstance(trace, dict) or set(trace) != {'child_task_ids', 'summary'}
+                or not isinstance(trace['child_task_ids'], list)
+                or not isinstance(trace['summary'], str) or not trace['summary'].strip()):
+            raise DevFlowError('subdelegation_trace needs child_task_ids and a nonempty summary')
+        if len(set(trace['child_task_ids'])) != len(trace['child_task_ids']):
+            raise DevFlowError('subdelegation_trace child_task_ids must be unique')
     return result
 
 
@@ -413,6 +443,10 @@ def record_attempt(run, task_id, failure, evidence):
 def completion_blockers(run):
     """Every reason the run cannot be completed now (empty list when it can)."""
     blockers = []
+
+    from . import nesting
+    for task in run.get('tasks', []):
+        blockers.extend(nesting.task_blockers(run, task))
 
     def valid(check, value):
         try:

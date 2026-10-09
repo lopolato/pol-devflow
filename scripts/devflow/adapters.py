@@ -41,10 +41,11 @@ def render_all(runtime, settings, root=None):
             result[name + '.toml'] = content
         else:
             lines = ['---', 'name: ' + json.dumps(name), 'description: ' + json.dumps(desc),
-                     'model: ' + json.dumps(selected.get('model', 'inherit')),
-                     'disallowedTools: Agent']
+                     'model: ' + json.dumps(selected.get('model', 'inherit'))]
+            if role not in ('architect', 'reviewer', 'tester'):
+                lines.append('disallowedTools: Agent')
             if role == 'reviewer':
-                lines.append('tools: Read, Glob, Grep')
+                lines.append('tools: Read, Glob, Grep, Agent')
             content = '\n'.join(lines) + '\n---\n\n<!-- GENERATED FILE: edit core/agents or models.yaml. -->\n\n' + body + '\n'
             result[name + '.md'] = content
     return result

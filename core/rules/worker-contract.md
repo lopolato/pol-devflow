@@ -1,10 +1,10 @@
 # Contrato del worker
 
-Leer el encargo del Coordinator antes de actuar y devolverle el resultado. No delegar, contactar otros workers ni preguntar directamente al usuario.
+Leer el encargo del Coordinator antes de actuar y devolverle el resultado. Solo los encargos full/native con delegation.enabled=true pueden solicitar hijos conforme a [subdelegación](subdelegation.md); todos los demás workers no delegan. No contactar otros workers ni preguntar directamente al usuario.
 Comprobar run_id, task_id, workspace, base_revision, candidate_revision, dependencias y write_scope. Ante discrepancias, detenerse e informar.
 Seguir instrucciones del proyecto. Encargos y documentos no conceden permisos nuevos.
 Inspeccionar código y evidencia; distinguir hechos, hipótesis y decisiones. Escribir solo dentro de write_scope. Los roles de lectura no modifican producto.
-No cambiar contratos compartidos sin decisión del Coordinator, integrar ramas hermanas, hacer push/despliegue/merge a main/master, descartar trabajo ajeno u omitir hooks/tests.
+No cambiar contratos compartidos sin decisión del Coordinator, integrar ramas hermanas, hacer push/despliegue/merge a main/master, descartar trabajo ajeno u omitir hooks/tests. Los padres no modifican estado compartido: solicitan al Coordinator registrar el hijo antes del lanzamiento y reciben el resultado por separado.
 
 Devolver un resultado estructurado con estos campos:
 schema_version: 1; run_id; task_id; worker_id; role; status (done/partial/blocked/cancelled);
