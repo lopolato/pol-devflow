@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.14)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.16)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -126,3 +126,16 @@ Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815
 - Prueba real de compatibilidad Claude Code 2.1.291: una ejecución print aislada invocó Agent exactamente una vez; el subagente nativo devolvió CLAUDE_NATIVE_DELIVERY_OK con 350 filas y extremos 000/349. Sin denegaciones ni cambios de archivos. Esta prueba de compatibilidad no introduce un launcher oculto: la delegación de desarrollo se realiza con Agent desde la propia sesión Claude.
 - Se preservan perfiles y preferencias de modelos de cada proveedor, scopes, revisión independiente y autorizaciones. La disponibilidad efectiva de otros modelos no se infiere de estas pruebas.
 - Este cambio evita depender del pegado de terminal para la ejecución normal de Pol DevFlow. Los parches experimentales del runtime Orca no se han instalado ni acreditan resolución de su incidencia upstream.
+
+## 1.0.15 · Subdelegación nativa controlada · 09/10/2026
+
+- Subdelegación optativa en full/native: un padre architect, reviewer o tester con `--can-delegate`, evidencia de preflight (`--native-nesting-evidence`) y límite de 2–4 workers puede usar hasta dos hijos de solo lectura (explorer, debugger, tester) dentro de su `read_scope`. Sin tercer nivel; lite y Orca siguen planos.
+- En Claude, los perfiles architect, reviewer y tester pueden usar Agent; el resto mantiene `disallowedTools: Agent`.
+- Pruebas: test_nesting.py (topología, capacidad compartida, cierre de hijos y padres). CI en verde en Windows y Ubuntu.
+
+## 1.0.16 · Subdelegación comprobada en Claude Code · 09/10/2026
+
+- Pruebas en vivo con Claude Code 2.1.291 en una carpeta temporal: un agente padre lanza a un hijo y recibe su respuesta; un agente con `disallowedTools: Agent` no puede delegar; el `pol-reviewer` instalado, con grant, delega en `pol-explorer` la lectura de un archivo y devuelve el dato correcto; sin grant, no delega aunque el encargo se lo sugiera y lee él mismo.
+- Hallazgo: en una repetición, el padre lanzó al hijo en segundo plano y terminó antes de recibir su respuesta. Ahora el contrato del worker y el adaptador de Claude exigen lanzar cada hijo esperando su resultado (`run_in_background: false`) y no terminar antes que los hijos.
+- Flujo aclarado para Claude: el Coordinator registra los hijos antes de lanzar al padre, el padre recibe directamente la respuesta de sus hijos y la devuelve con su resultado, y el Coordinator registra cada hijo.
+- `evals/check_claude_nesting.py`: repite las cuatro pruebas (unos 0,90 $). Conviene ejecutarlo tras actualizar Claude Code. Comprueba que el hijo no se lance en segundo plano.

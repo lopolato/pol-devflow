@@ -1,4 +1,4 @@
-# Pol DevFlow 1.0.15
+# Pol DevFlow 1.0.16
 
 La 1.0.15 permite delegación nativa optativa de un nivel adicional en full, tanto Codex como Claude Code, con grants explícitos, scopes de lectura contenidos, dos plazas por padre y un máximo de cuatro workers activos. Los hijos son solo lectura; el Coordinator registra cada hijo antes del lanzamiento y recoge su resultado para el padre.
 

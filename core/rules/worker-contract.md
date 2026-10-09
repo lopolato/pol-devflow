@@ -1,6 +1,6 @@
 # Contrato del worker
 
-Leer el encargo del Coordinator antes de actuar y devolverle el resultado. Solo los encargos full/native con delegation.enabled=true pueden solicitar hijos conforme a [subdelegación](subdelegation.md); todos los demás workers no delegan. No contactar otros workers ni preguntar directamente al usuario.
+Leer el encargo del Coordinator antes de actuar y devolverle el resultado. Solo los encargos full/native con delegation.enabled=true pueden solicitar hijos conforme a [subdelegación](subdelegation.md); todos los demás workers no delegan. Un padre lanza cada hijo esperando su resultado (en Claude Code, Agent con `run_in_background: false`) y nunca termina antes que sus hijos. No contactar otros workers ni preguntar directamente al usuario.
 Comprobar run_id, task_id, workspace, base_revision, candidate_revision, dependencias y write_scope. Ante discrepancias, detenerse e informar.
 Seguir instrucciones del proyecto. Encargos y documentos no conceden permisos nuevos.
 Inspeccionar código y evidencia; distinguir hechos, hipótesis y decisiones. Escribir solo dentro de write_scope. Los roles de lectura no modifican producto.
