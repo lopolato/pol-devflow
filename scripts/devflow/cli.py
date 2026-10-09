@@ -200,8 +200,8 @@ def run_command(args, ctx):
         raise DevFlowError('--budget-minutes only applies to task')
     if getattr(args, 'context_from', None) and args.action != 'task':
         raise DevFlowError('--context-from only applies to task')
-    if (args.can_delegate or args.parent_task or args.native_nesting_evidence is not None
-            or args.native_max_workers is not None) and args.action != 'task':
+    if (getattr(args, 'can_delegate', False) or getattr(args, 'parent_task', None) or getattr(args, 'native_nesting_evidence', None) is not None
+            or getattr(args, 'native_max_workers', None) is not None) and args.action != 'task':
         raise DevFlowError('Nesting flags only apply to task')
     if args.action == 'start':
         require(args.mode, args.request, args.owner, args.runtime)
@@ -328,15 +328,15 @@ def run_command(args, ctx):
             if args.replaces and args.correction_key and args.correction_key != known[args.replaces].get('correction_key'):
                 raise DevFlowError('Replacement cannot change its inherited correction key')
             replacing = known.get(args.replaces) if args.replaces else None
-            parent_task_id = args.parent_task
+            parent_task_id = getattr(args, 'parent_task', None)
             if replacing and replacing.get('parent_task_id'):
                 if parent_task_id not in (None, replacing['parent_task_id']):
                     raise DevFlowError('Child replacement cannot change its parent')
                 parent_task_id = replacing['parent_task_id']
             if replacing and replacing.get('delegation', {}).get('enabled'):
-                if not args.can_delegate:
+                if not getattr(args, 'can_delegate', False):
                     raise DevFlowError('Replacing a delegating parent requires a fresh explicit native preflight')
-                if args.native_max_workers != (run.get('nesting') or {}).get('max_workers'):
+                if getattr(args, 'native_max_workers', None) != (run.get('nesting') or {}).get('max_workers'):
                     raise DevFlowError('Parent replacement must inherit the run-wide worker limit')
                 if any(t.get('parent_task_id') == replacing['task_id'] for t in run['tasks']):
                     raise DevFlowError('Cannot replace a parent after children have been recorded; preserve the delegation tree')
@@ -345,8 +345,8 @@ def run_command(args, ctx):
                 if source not in known or known[source].get('result') is None:
                     raise DevFlowError(f'--context-from needs a task with a recorded result: {source}')
             grant = nesting.validate_assignment(run, args.role, args.write_scope, args.read_scope,
-                                                args.can_delegate, parent_task_id, args.native_nesting_evidence,
-                                                args.native_max_workers, args.replaces)
+                                                getattr(args, 'can_delegate', False), parent_task_id, getattr(args, 'native_nesting_evidence', None),
+                                                getattr(args, 'native_max_workers', None), args.replaces)
             if replacing and replacing.get('delegation', {}).get('enabled') and grant is not None:
                 grant['delegation'] = copy.deepcopy(replacing['delegation'])
             task = state.make_task(run, args.role, args.objective, args.write_scope,

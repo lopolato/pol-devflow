@@ -254,13 +254,14 @@ def make_task(run, role, objective, write_scope, read_scope=None, dependencies=N
             'workspace': run['workspace'], 'branch': run['branch'], 'base_revision': run['base_revision'],
             'candidate_revision': run['current_revision'], 'read_scope': read_scope or [],
             'write_scope': write_scope, 'shared_contracts': [], 'relevant_context': [],
-            'constraints': ['Deliver to Coordinator; no push or merge main/master'],
+            'constraints': ['No delegation; deliver to Coordinator; no push or merge main/master'],
             'expected_validation': list(run['required_checks']), 'remaining_fix_cycles': max(0, remaining),
             'correction_key': correction_key, 'assigned_at': now(), 'budget_minutes': budget_minutes,
             'deliver_to': 'coordinator', 'status': 'pending', 'result': None,
             'parent_task_id': parent_task_id, 'depth': depth,
             'delegation': copy.deepcopy(delegation or {'enabled': False})}
     if task['delegation'].get('enabled'):
+        task['constraints'][0] = 'Deliver to Coordinator; no push or merge main/master'
         task['constraints'].append('You may request read-only explorer/debugger/tester child tasks through the Coordinator; do not edit shared run state')
     else:
         task['constraints'].append('Do not delegate; deliver your result to the Coordinator')
