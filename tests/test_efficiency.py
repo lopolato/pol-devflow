@@ -68,6 +68,7 @@ class EfficiencyTests(unittest.TestCase):
         run = self.start()
         self.cli('_metrics', 'add', '--run', run['run_id'], '--owner', 'co', '--role', 'implementer',
                  '--activity', 'implementation', '--duration-ms', '1200')
+        self.cli('_metrics', 'add', '--run', run['run_id'], '--owner', 'co', '--role', 'reviewer', '--tokens', '100')
         self.cli('_metrics', 'add', '--run', run['run_id'], '--owner', 'co', '--role', 'tester',
                  '--activity', 'tests', '--duration-ms', '800')
         legacy = metrics.entry({'role': 'reviewer', 'duration_ms': 50})
@@ -78,7 +79,9 @@ class EfficiencyTests(unittest.TestCase):
         stats = metrics.stats(self.data, self.repo)
         self.assertEqual(stats['activities']['implementation']['duration_ms'], 1200)
         self.assertEqual(stats['activities']['tests']['duration_known'], 1)
-        self.assertEqual(stats['total_tokens_known'], 0)
+        self.assertEqual(stats['tasks']['full:feature']['tokens'], 100)
+        self.assertEqual(stats['roles']['reviewer']['tokens'], 100)
+        self.assertEqual(stats['total_tokens_known'], 100)
         self.assertNotIn('review', stats['activities'])
         self.assertEqual(stats['roles']['reviewer']['duration_ms'], 50)
 
@@ -104,6 +107,30 @@ class EfficiencyTests(unittest.TestCase):
                                                      'revision': run['base_revision'], 'evidence': 'made up'}]}
         self.cli('_run', 'prepare-result', '--run', run['run_id'], '--task-id', task['task_id'],
                  '--input', self.write('fabricated.json', fabricated), ok=False)
+
+    def test_brief_reviewer_can_record_explicit_review_and_usage_without_identity_bypass(self):
+        run = self.start()
+        task = self.cli('_run', 'task', '--run', run['run_id'], '--owner', 'co', '--role', 'reviewer',
+                        '--objective', 'review candidate')
+        base = {'run_id': run['run_id'], 'task_id': task['task_id'], 'worker_id': 'reviewer-real',
+                'role': 'reviewer', 'status': 'done', 'summary': 'Inspected candidate',
+                'observed_revision': run['base_revision'], 'result_revision': None,
+                'review': {'verdict': 'passed', 'coverage': 'Inspected full diff and relevant code'},
+                'usage': {'tokens': 44, 'duration_ms': 17}}
+        self.cli('_run', 'record', '--run', run['run_id'], '--owner', 'co', '--task-id', task['task_id'],
+                 '--brief', '--input', self.write('bad-usage.json', base | {'usage': {'tokens': -1}}), ok=False)
+        self.cli('_run', 'record', '--run', run['run_id'], '--owner', 'co', '--task-id', task['task_id'],
+                 '--brief', '--input', self.write('usage-identity.json', base | {'usage': {'tokens': 1,
+                                                                                           'worker_id': 'fake'}}), ok=False)
+        unchanged = state.load(self.data, run['run_id'])
+        self.assertIsNone(unchanged['tasks'][0]['result'])
+        self.assertNotIn('metrics', unchanged)
+        self.cli('_run', 'record', '--run', run['run_id'], '--owner', 'co', '--task-id', task['task_id'],
+                 '--brief', '--input', self.write('review-brief.json', base))
+        saved = state.load(self.data, run['run_id'])
+        self.assertEqual(saved['tasks'][0]['result']['review'], base['review'])
+        self.assertEqual(saved['metrics'][0]['tokens'], 44)
+        self.assertEqual(saved['metrics'][0]['worker_id'], 'reviewer-real')
 
     def test_incremental_review_needs_real_independent_coverage_and_keeps_full_diff(self):
         run = self.start()

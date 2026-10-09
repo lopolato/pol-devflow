@@ -219,7 +219,7 @@ class PilotFixTests(unittest.TestCase):
                                  'next_action': '',
                                  'usage': {'model': None, 'tokens': None, 'duration_ms': None}})
         review = self.run_cli('template', run, '--task-id', reviewer['task_id'])
-        self.assertEqual(review['review'], {'verdict': ''})
+        self.assertEqual(review['review'], {'verdict': '', 'coverage': ''})
         self.cli('_run', 'template', '--run', run['run_id'], '--owner', 'intruder', '--task-id', explorer['task_id'],
                  ok=False)
         self.run_cli('template', run, '--task-id', 'task-missing', ok=False)

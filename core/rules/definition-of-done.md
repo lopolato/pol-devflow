@@ -6,6 +6,8 @@ Con executor orca, completed exige settlement aceptado y accounting registrado d
 
 Cada comprobación registra procedimiento o comando, workspace, versión del código y resultado:
 
+La suite completa también puede acreditarse con CI solo si valida el mismo SHA y el entorno aplica al proyecto. No repetir una suite local completa ya cubierta por ese resultado; ejecutar localmente las regresiones afectadas por cambios posteriores.
+
 ~~~text
 passed | failed | not_run | not_applicable
 ~~~

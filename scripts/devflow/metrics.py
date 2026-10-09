@@ -196,11 +196,11 @@ def stats(data, repository=None, all_repos=False, since_days=None):
                 role['duration_known'] += 1
             activity = item.get('activity')
             if activity in ACTIVITIES:
-                bucket = activities.setdefault(activity, {'calls': 0, 'duration_ms': 0, 'duration_known': 0})
-                bucket['calls'] += 1
+                activity_bucket = activities.setdefault(activity, {'calls': 0, 'duration_ms': 0, 'duration_known': 0})
+                activity_bucket['calls'] += 1
                 if item.get('duration_ms') is not None:
-                    bucket['duration_ms'] += item['duration_ms']
-                    bucket['duration_known'] += 1
+                    activity_bucket['duration_ms'] += item['duration_ms']
+                    activity_bucket['duration_known'] += 1
             model = item.get('model') or 'unknown'
             role['models'][model] = role['models'].get(model, 0) + 1
     for role in roles.values():

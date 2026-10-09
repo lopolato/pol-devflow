@@ -211,7 +211,7 @@ def prepare_brief_result(run, task, brief):
     """Expand a factual worker handoff without inferring checks, usage or authorship."""
     allowed = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision',
                'result_revision', 'files_inspected', 'commits', 'decisions', 'validation', 'findings',
-               'criteria_results', 'risks', 'out_of_scope', 'questions', 'next_action'}
+               'criteria_results', 'risks', 'out_of_scope', 'questions', 'next_action', 'review', 'usage'}
     required = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision', 'result_revision'}
     if not isinstance(brief, dict) or set(brief) - allowed or required - set(brief):
         raise DevFlowError('Brief result requires explicit run/task/worker identity, role, status, summary, observed_revision and result_revision; only factual evidence fields are accepted')
@@ -222,12 +222,26 @@ def prepare_brief_result(run, task, brief):
     result = state.empty_result(task, brief['worker_id'])
     for field in ('status', 'summary', 'observed_revision', 'result_revision', 'files_inspected', 'commits',
                   'decisions', 'validation', 'findings', 'criteria_results', 'risks', 'out_of_scope', 'questions',
-                  'next_action'):
+                  'next_action', 'review', 'usage'):
         if field in brief:
             result[field] = brief[field]
     result['workspace_dirty'] = live['dirty']
     result['files_changed'] = sorted(gitops.changed_paths(task['workspace'], task['candidate_revision']))
     state.validate_result(task, result)
+    if 'usage' in brief:
+        if (not isinstance(brief['usage'], dict)
+                or set(brief['usage']) - {'model', 'tokens', 'duration_ms', 'tool_uses', 'source', 'activity', 'phase'}):
+            raise DevFlowError('Brief usage accepts only explicitly reported model, tokens, duration_ms, tool_uses, source, activity and phase')
+        metrics.entry({**brief['usage'], 'role': task['role'], 'task_id': task['task_id'],
+                       'worker_id': brief['worker_id']})
+    if task['role'] == 'reviewer':
+        review = brief.get('review')
+        if (not isinstance(review, dict)
+                or review.get('verdict') not in ('passed', 'changes_required', 'incomplete')
+                or not isinstance(review.get('coverage'), str) or not review['coverage'].strip()):
+            raise DevFlowError('Reviewer brief requires an explicit verdict and nonempty coverage')
+    elif 'review' in brief:
+        raise DevFlowError('Only a reviewer brief may include review')
     return result
 
 
@@ -331,8 +345,6 @@ def run_command(args, ctx):
         if not task:
             raise DevFlowError('No matching assignment for --task-id')
         template = state.empty_result(task, task.get('orca', {}).get('worker_id', ''))
-        if task['role'] == 'reviewer':
-            template['review'] = {'verdict': ''}
         template['usage'] = {'model': None, 'tokens': None, 'duration_ms': None}
         return template
     with state.RunLock(data, args.run, args.owner):

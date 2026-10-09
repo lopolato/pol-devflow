@@ -367,6 +367,8 @@ def empty_result(task, worker_id):
                    'worker_id': worker_id, 'role': task['role'], 'status': 'partial', 'summary': '',
                    'observed_revision': task['candidate_revision'], 'result_revision': None,
                    'workspace_dirty': False, 'next_action': ''})
+    if task['role'] == 'reviewer':
+        result['review'] = {'verdict': '', 'coverage': ''}
     return result
 
 
