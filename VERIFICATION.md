@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.17)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.18)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -149,3 +149,12 @@ Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815
 - Reglas del proyecto: `_rules add|confirm|remove|for|import-tests` y `rules` (consulta). Guardadas fuera del repo por defecto (o `.devflow/rules.json` con `--repo-file`), con aviso de obsoletas si cambian sus archivos. Un bug corregido propone una regla `must_not` enlazada a su test; el reviewer comprueba las reglas de los archivos tocados.
 - README con guía rápida al principio e historial de una línea por versión.
 - Pruebas nuevas: test_release.py (19), test_usage_budget.py (8), test_retro.py y test_rules.py (20). Las de uso, retro y reglas fallan contra la 1.0.16.
+
+## 1.0.18 · Entregas breves y revisiones incrementales · 09/10/2026
+
+- Entrega breve: `_run record --brief` acepta un resultado corto con identidad explícita (run, task, worker, rol, estado, resumen, revisiones observada y resultante) y lo expande con los mismos controles que un resultado completo. Rechaza identidades que no coinciden con el encargo y `usage` con campos no reportados; el reviewer debe declarar veredicto y `coverage` no vacía.
+- Revisión incremental: `_run task --role reviewer --review-from TASK` genera, además del diff completo, un diff delta desde la revisión anterior (con hash). Solo se admite si la revisión previa fue independiente, completa (no `incomplete`), con cobertura explícita y registrada antes de autores posteriores; `record` comprueba el hash del delta.
+- Métricas por actividad: `usage.activity` (implementation, tests, review, reporting, coordination, waiting) y su resumen en `stats`, separado del tiempo de reloj; los registros antiguos sin actividad siguen como desconocidos.
+- Pautas: pruebas y revisión de lectura en paralelo sobre el candidato limpio, regresión exacta antes del fix y suite completa una sola vez al final.
+- Pruebas: 4 nuevas en test_efficiency.py (expansión de entregas breves e identidades, reviewer breve con usage, revisión incremental con cobertura independiente y diff completo conservado, estadísticas por actividad); ajustes menores en test_lifecycle, test_pilot_fixes y test_report_regressions. CI en verde en Windows y Ubuntu (PR #2).
+- Nota redactada al publicar, a partir del diff y los tests de la versión.
