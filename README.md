@@ -1,6 +1,6 @@
-# Pol DevFlow 1.0.18
+# Pol DevFlow 1.0.19
 
-La 1.0.18 admite entregas breves que el Coordinator prepara y registra en una pasada con los mismos guards, reviews delta ligadas a cobertura independiente y ancestros Git, y métricas opcionales por actividad. Las pautas priorizan pruebas/review de lectura en paralelo sobre el candidato limpio, regresión exacta antes del fix y suite completa una vez al final.
+La 1.0.19 elige el nivel por riesgo y comprensión, no por número de archivos; guarda la petición literal del usuario (`--request-file`, `request_ref`) para que los workers la lean sin paráfrasis; el instalador retira archivos propios obsoletos y `release.py --wait-ci` espera a que CI termine.
 
 Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optimize` con workers, Git seguro, pruebas reales y revisión independiente. El Coordinator es la sesión del chat; el CLI Python solo aporta operaciones deterministas (estado, Git, evidencia), no es un agente.
 
@@ -15,13 +15,13 @@ Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optim
    /pol-devflow cleanup
    ```
 
-3. **Elegir nivel** (sin flag, el Coordinator propone uno y lo justifica):
+3. **Elegir nivel** (sin flag, el Coordinator propone uno y lo justifica; decide el riesgo y si se entiende, no el número de archivos):
 
    | Nivel | Cuándo | Qué hace |
    |---|---|---|
-   | `--lite` | Cambio claro, ≤3 archivos de producto con tests, sin migraciones, datos ni concurrencia | Rama en la carpeta actual; trabaja `pol-lite` con modelo ligero |
-   | `--lite --review` | Lo anterior, pero toca permisos/seguridad o reglas de negocio, o pides review | Igual, más `pol-reviewer` independiente sobre el diff |
-   | `--full` | Todo lo demás; `optimize` siempre | Worktree propio, roles según necesidad, review y `check-close` |
+   | `--lite` | Cambio claro sin riesgo alto ni investigación amplia, una sola parte (p. ej. renombrar una etiqueta en 6 pantallas) | Rama en la carpeta actual; `pol-lite` (modelo ligero) solo escribe en su scope asignado |
+   | `--lite --review` | Pequeño y claro, pero de riesgo alto: permisos, dinero, comunicaciones a clientes, datos, tareas programadas (p. ej. corregir el IVA en una línea), o pides review | Igual, más `pol-reviewer` independiente sobre el diff |
+   | `--full` | Migraciones, cambios de datos, concurrencia, investigación amplia o varias partes independientes; `optimize` siempre | Worktree propio, roles según necesidad, review y `check-close` |
 
    Lite no usa worktree (`node_modules` y `.env` siguen disponibles); si la tarea crece, pasa a full sobre la misma rama.
 
@@ -31,7 +31,7 @@ Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optim
 
 ## Comandos
 
-`error`, `feature`, `optimize`, `help`, `status`, `stats`, `retro`, `rules`, `config`, `cleanup`. Detalle en [comandos](core/commands.md).
+`error`, `feature`, `optimize`, `help`, `status`, `stats`, `retro`, `rules`, `config`, `cleanup`. Detalle en [comandos](core/commands.md). `tests/test_docs_consistency.py` falla si la documentación cita un comando, acción o flag que el CLI no tiene.
 
 - `status [--run ID]`: estado, tareas vencidas (`overdue_tasks`) y presupuesto del run.
 - `stats [--all] [--since DAYS] [--features]`: tokens, tiempo y modelos registrados por rol (lo no reportado figura como desconocido, nunca estimado). `--features` cuenta qué funciones se usan y lista `never_used`, candidatas a recortar.
@@ -64,9 +64,9 @@ python scripts/uninstall.py --runtime all
 python scripts/validate.py [--runtime codex|claude]
 ```
 
-El instalador actualiza solo archivos propios cuyo hash coincide con el manifiesto (ante edición manual se detiene), conserva configuración de modelos, ejecuciones, ramas y worktrees, y crea backup transaccional. No modifica config.toml ni settings.json. Claude recibe `disable-model-invocation` y `argument-hint` del adaptador; Codex, su política en agents/openai.yaml. No copiar el SKILL.md del ZIP a mano: usar el instalador. `validate.py` sin `--runtime` valida el paquete portable, no la instalación.
+El instalador actualiza solo archivos propios cuyo hash coincide con el manifiesto (ante edición manual se detiene) y retira los propios que la nueva versión ya no incluye si siguen intactos (`removed_obsolete`; los editados se conservan en `preserved_modified`), conserva configuración de modelos, ejecuciones, ramas y worktrees, y crea backup transaccional. No modifica config.toml ni settings.json. Claude recibe `disable-model-invocation` y `argument-hint` del adaptador; Codex, su política en agents/openai.yaml. No copiar el SKILL.md del ZIP a mano: usar el instalador. `validate.py` sin `--runtime` valida el paquete portable, no la instalación.
 
-Publicar una versión: `main` está protegida (exige CI verde), así que la versión se prepara en una rama y `scripts/release.py VERSION --push --install` solo etiqueta, publica e instala. Pasos en [PILOTO.md](PILOTO.md#flujo-de-mantenimiento).
+Publicar una versión: `main` está protegida (exige CI verde), así que la versión se prepara en una rama y `scripts/release.py VERSION --wait-ci --push --install` solo espera CI, etiqueta, publica e instala. Pasos en [PILOTO.md](PILOTO.md#flujo-de-mantenimiento).
 
 ## Modelos
 
@@ -89,8 +89,9 @@ MIT. Ver [LICENSE](LICENSE).
 
 ## Historial
 
-- 1.0.17: presupuesto por run, registro de funciones usadas (`stats --features`), retro de proceso, reglas del proyecto y `scripts/release.py`.
+- 1.0.19: nivel por riesgo y comprensión (sin límite de archivos en lite), petición literal por referencia (`request_ref`), instalador que retira obsoletos, `release.py --wait-ci` y test de coherencia docs/CLI.
 - 1.0.18: entrega breve con guards, review delta ligada a cobertura/ancestro, pautas de pruebas seguras y métricas por actividad.
+- 1.0.17: presupuesto por run, registro de funciones usadas (`stats --features`), retro de proceso, reglas del proyecto y `scripts/release.py`.
 - 1.0.16: subdelegación comprobada en Claude Code y espera obligatoria de los hijos.
 - 1.0.15: subdelegación nativa optativa de un nivel en full (grants, solo lectura, máx. 4 workers activos).
 - 1.0.14: delegación nativa preferida también dentro de Orca; executor fijo por run.

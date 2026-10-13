@@ -4,24 +4,22 @@ Objetivo: resolver una tarea pequeña y clara (error o feature) con un modelo li
 
 ## Elegir el nivel
 
-`--lite` o `--full` fuerzan el nivel; `--review` pide revisión independiente (`--lite --review` = lite+review, `--full --review` = full con review, solo `--review` = nivel automático con review). Sin flag de nivel, el Coordinator propone uno y lo justifica en una línea. Lite solo si se cumple todo:
+`--lite` o `--full` fuerzan el nivel; `--review` pide revisión independiente (`--lite --review` = lite+review, `--full --review` = full con review, solo `--review` = nivel automático con review). Sin flag de nivel, el Coordinator decide por riesgo y comprensión (el número de archivos es solo una pista) y justifica el nivel en una línea; si ninguna pregunta lleva a otro nivel, lite:
 
-- el cambio está claro y se sabe qué tocar sin investigación amplia;
-- afecta a 3 archivos de producto (incluidos tests) como máximo;
-- no toca migraciones, datos ni concurrencia, ni es trabajo amplio o de varias áreas;
-- el modo es error o feature (optimize siempre es full y no admite `--review`);
-- el checkout está limpio, salvo archivos sin seguimiento ajenos a la tarea. Con modificaciones de archivos versionados, usar full o preguntar.
+1. ¿Riesgo alto? Permisos/accesos/seguridad; dinero (importes, IVA, facturas, cobros, pagos); comunicaciones a clientes (correos, recordatorios, notificaciones); datos (migraciones, borrados, cambios de estructura); concurrencia o tareas automáticas/programadas. Nunca lite sin review: lite+review si por lo demás es pequeño y se entiende; full con migraciones, cambios de datos, concurrencia o trabajo amplio.
+2. ¿Se entiende sin investigación amplia? Si no, full (o explorer primero). Muchos archivos obligan a revisar esta pregunta, nunca deciden por sí solos.
+3. ¿Hay dos o más partes independientes que pueden escribir workers distintos? Si sí, full.
 
-Si además toca permisos/seguridad o reglas de negocio relevantes, o el usuario/proyecto pide review, el nivel es lite+review; lite sin review no los toca. Si el usuario fuerza `--lite` y no se cumple una condición, explicar cuál y proponer lite+review o full según corresponda; no seguir en lite. Plan-only se detiene antes de crear la rama.
+Lite exige además modo error o feature (optimize siempre es full y no admite `--review`) y checkout limpio salvo archivos sin seguimiento ajenos a la tarea (con versionados modificados, usar full o preguntar). Si el usuario/proyecto pide review, lite+review. Si el usuario fuerza `--lite` y no cabe, explicar por qué y proponer lite+review o full; no seguir en lite. Plan-only se detiene antes de crear la rama.
 
 ## Pasos del Coordinator
 
 1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. Ejecutar `_profile show`: si existe y no está `stale`, usar sus comandos; si falta o está obsoleto, pol-lite los descubre. Si devuelve `codegraph`, pasar su `project_path` a pol-lite. `_rules for --path P` con los archivos previstos (barato; sin reglas, seguir) y pasar las devueltas a pol-lite como límites. No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
 2. Crear la rama en la carpeta actual, sin worktree:
-   `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION [--review] --executor EXECUTOR`
-   El helper exige checkout limpio salvo untracked, nunca escribe en main/master y registra la rama para `cleanup`. Devuelve `untracked_preserved`, `session_model_hint` e `identity`; si esta trae `warning`, resolver el autor según [Git](../rules/git-worktrees.md).
-3. Delegar en `pol-lite`: petición, criterios, carpeta, rama, revisión base, scope de producto, `untracked_preserved` como "no tocar ni confirmar", autor si se resolvió, comprobaciones (comandos del perfil si existen) y ruta de esta skill. Solo con memoria activada, añadir la ruta del informe y hasta 2 documentos/memoria afectados; sin activación no hay informe ni memoria en el repositorio. Usar la API nativa comprobada del anfitrión (Codex o Claude), salvo petición explícita Orca o falta de API nativa; en ese caso comprobar Orca en vivo. No simular workers con subprocessos o pegado TUI. Si no hay backend disponible, informar bloqueo.
-4. Verificar con Git: rama, commit, archivos cambiados dentro de los límites y checkout limpio. No aceptar `done` sin comprobaciones ejecutadas en el commit final. Guardar en el perfil los comandos que pol-lite ejecutó (`_profile set`) y registrar su uso real con `_metrics add --lite ID --role lite [--owner SESSION]` y las funciones que el CLI no ve con `_metrics feature --lite ID --name NAME [--owner SESSION]`. En un error corregido con test de regresión, proponer la regla `must_not` como en [error](error.md).
+   `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION [--request-file FILE] [--review] --executor EXECUTOR`
+   El helper exige checkout limpio salvo untracked, nunca escribe en main/master y registra la rama para `cleanup`. `--request` es el título; `--request-file` guarda el mensaje literal del usuario (sin él se guarda `--request`). Devuelve `request_ref`, `untracked_preserved`, `session_model_hint` e `identity`; si esta trae `warning`, resolver el autor según [Git](../rules/git-worktrees.md).
+3. Delegar en `pol-lite`: `request_ref` (la petición literal; nunca sustituirla por una paráfrasis), criterios, carpeta, rama, revisión base, write scope asignado (rutas de producto y tests), `untracked_preserved` como "no tocar ni confirmar", autor si se resolvió, comprobaciones (comandos del perfil si existen) y ruta de esta skill. Solo con memoria activada, añadir la ruta del informe y hasta 2 documentos/memoria afectados; sin activación no hay informe ni memoria en el repositorio. Usar la API nativa comprobada del anfitrión (Codex o Claude), salvo petición explícita Orca o falta de API nativa; en ese caso comprobar Orca en vivo. No simular workers con subprocessos o pegado TUI. Si no hay backend disponible, informar bloqueo.
+4. Verificar con Git: rama, commit, archivos cambiados dentro del scope asignado y checkout limpio. No aceptar `done` sin comprobaciones ejecutadas en el commit final. Guardar en el perfil los comandos que pol-lite ejecutó (`_profile set`) y registrar su uso real con `_metrics add --lite ID --role lite [--owner SESSION]` y las funciones que el CLI no ve con `_metrics feature --lite ID --name NAME [--owner SESSION]`. En un error corregido con test de regresión, proponer la regla `must_not` como en [error](error.md).
 5. Solo lite+review: `_lite review-diff --lite ID --author-id LITE_WORKER_ID` genera el diff con hash. Lanzar `pol-reviewer` (distinto del autor y del Coordinator) con la ruta del diff y los criterios; guardar su JSON {worker_id, verdict passed|changes_required|incomplete, revision, findings} con `_lite review --lite ID --input FILE`. Con changes_required, enviar los blockers aceptados a pol-lite para una corrección con commit y repetir review-diff y review. Si `_lite review` devuelve `escalate` (tercer changes_required), pasar a full. No hay `done` sin `review_current: true` en `_lite status --lite ID`.
 
 ## Orca
@@ -32,9 +30,9 @@ Elegir `EXECUTOR` antes de iniciar: native por defecto con API anfitriona compro
 
 Si el worker devuelve `escalate`, o se detecta una condición de full, confirmar el trabajo útil con el helper de commit (marcado como incompleto), explicar el motivo al usuario y continuar en full sobre la misma rama:
 
-`python scripts/devflow.py --repo PROJECT _run start --mode MODE --request DESCRIPTION --criterion CRITERION --runtime RUNTIME --owner SESSION_ID --reuse-branch RAMA_LITE`
+`python scripts/devflow.py --repo PROJECT _run start --mode MODE --request DESCRIPTION --request-file FILE --criterion CRITERION --runtime RUNTIME --owner SESSION_ID --reuse-branch RAMA_LITE`
 
-Conservar el executor del registro lite al pasar a full. Con executor orca añadir `--executor orca` y liquidar antes el intento lite; nunca relanzar por timeout. `--runtime` identifica el anfitrión codex/claude, no el executor.
+Conservar el executor del registro lite al pasar a full y pasar como `--request-file` la ruta de `request_ref`. Con executor orca añadir `--executor orca` y liquidar antes el intento lite; nunca relanzar por timeout. `--runtime` identifica el anfitrión codex/claude, no el executor.
 
 ## Resumen final
 

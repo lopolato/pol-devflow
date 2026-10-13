@@ -57,6 +57,7 @@ def review_diff(data, record, author_id=None):
 def record_review(record, value):
     if not isinstance(value, dict) or set(value) - {'worker_id', 'verdict', 'revision', 'findings'}:
         raise DevFlowError('Lite review accepts only worker_id, verdict, revision and findings')
+    state.verify_request(record)
     if not isinstance(value.get('worker_id'), str) or not value['worker_id'].strip():
         raise DevFlowError('Lite review needs the actual reviewer worker_id')
     if value.get('verdict') not in VERDICTS:

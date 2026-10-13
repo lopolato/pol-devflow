@@ -6,7 +6,7 @@ Elegir executor antes de iniciar: preferir API nativa disponible en el runtime a
 
 ## Preflight y planificación
 
-Para error y feature, decidir primero el nivel según [lite](workflows/lite.md). En lite y lite+review, seguir ese workflow; el resto de este procedimiento aplica a full. Con `--review` en full, fijar `review_required: true`.
+Para error y feature, decidir primero el nivel por riesgo y comprensión, no por número de archivos, según [lite](workflows/lite.md). En lite y lite+review, seguir ese workflow; el resto de este procedimiento aplica a full. Con `--review` en full, fijar `review_required: true`.
 
 Inspeccionar instrucciones y convenciones del proyecto, Git, cambios locales, código relevante y capacidades. Definir criterios; preguntar según [clarificación](rules/grill-me.md). Preservar cambios previos.
 
@@ -27,10 +27,10 @@ Consultar [Git](rules/git-worktrees.md) y [estado](rules/context-sharing.md). Si
 Desde la carpeta de la skill, con rutas absolutas y argumentos citados:
 
 ```text
-python scripts/devflow.py --repo PROJECT _run start --mode feature --request DESCRIPTION --criterion CRITERION --runtime RUNTIME --executor EXECUTOR --owner SESSION_ID
+python scripts/devflow.py --repo PROJECT _run start --mode feature --request DESCRIPTION --request-file FILE --criterion CRITERION --runtime RUNTIME --executor EXECUTOR --owner SESSION_ID
 ```
 
-`RUNTIME` es obligatorio: `codex` o `claude`, según la sesión actual. `EXECUTOR` es `native` u `orca`, elegido por capacidad real y petición del usuario; disponer del otro CLI no prueba su API de subagentes. Repetir `--criterion` por criterio. `--base REF` fija otra base. `--reuse-branch BRANCH` reutiliza únicamente una rama propia actualmente abierta y limpia; nunca main/master. `--max-workers N` y `--max-tokens N` fijan presupuesto (proponerlo en tareas grandes): `_run task` rechaza superar max_workers (cuenta todos los encargos, también hijos y reemplazos); subirlo solo con aprobación expresa del usuario mediante `_run update` con `budget` {max_workers, max_tokens, approved_by} (solo aumenta). Superar max_tokens no bloquea: lo informan `status`, `_run show` y `check-close` (`budget_warnings`). El helper crea una carpeta corta `wt-<id>` para el worktree y registra la selección de modelos en un snapshot.
+`RUNTIME` es obligatorio: `codex` o `claude`, según la sesión actual. `EXECUTOR` es `native` u `orca`, elegido por capacidad real y petición del usuario; disponer del otro CLI no prueba su API de subagentes. `--request` es el título corto; `--request-file` guarda el mensaje literal del usuario (sin él, se guarda `--request`) y los encargos lo referencian con `request_ref`. Repetir `--criterion` por criterio. `--base REF` fija otra base. `--reuse-branch BRANCH` reutiliza únicamente una rama propia actualmente abierta y limpia; nunca main/master. `--max-workers N` y `--max-tokens N` fijan presupuesto (proponerlo en tareas grandes): `_run task` rechaza superar max_workers (cuenta todos los encargos, también hijos y reemplazos); subirlo solo con aprobación expresa del usuario mediante `_run update` con `budget` {max_workers, max_tokens, approved_by} (solo aumenta). Superar max_tokens no bloquea: lo informan `status`, `_run show` y `check-close` (`budget_warnings`). El helper crea una carpeta corta `wt-<id>` para el worktree y registra la selección de modelos en un snapshot.
 
 Con executor orca, `--executor orca` usa el checkout existente limpio y crea una rama propia sin worktree adicional. Seleccionar/crear aislamiento por Orca solo si hace falta, y verificar placement. La propiedad Orca del workspace es independiente del executor: registrar los workspaces propios gestionados y usar Orca para su ciclo de vida incluso con workers nativos; no duplicar creación/retirada con Git. Para native en una rama de tarea Orca existente y limpia, usar `--executor native --reuse-branch TASK_BRANCH` desde ese checkout comprobado. Sin reutilización, el helper native crea su propio worktree no gestionado por Orca; eso no transforma ni retira el workspace Orca previo.
 

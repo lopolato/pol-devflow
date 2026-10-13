@@ -54,10 +54,10 @@ class ReleaseTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(SCRIPT), *args, '--repo', str(self.repo)], stdin=stdin,
                               capture_output=True, text=True, encoding='utf-8', errors='replace')
 
-    def in_process(self, *args, ci_runner):
+    def in_process(self, *args, ci_runner, **clock):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = release.main([*args, '--repo', str(self.repo)], ci_runner=ci_runner)
+            code = release.main([*args, '--repo', str(self.repo)], ci_runner=ci_runner, **clock)
         return code, out.getvalue(), err.getvalue()
 
     def refs(self, repo):
@@ -204,6 +204,82 @@ class ReleaseTests(unittest.TestCase):
         code, out, _ = self.in_process('1.0.17', '--skip-tests', ci_runner=lambda s, h: ('success', '4 passed'))
         self.assertEqual(code, 0, out)
         self.assertIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
+    # -- --wait-ci (injected runner, sleep and clock; never GitHub, never real waiting) --
+    def fake_ci(self, *states):
+        """Runner returning states in order (the last one repeats) plus a fake clock advanced by sleep."""
+        calls, sleeps, now = [], [], [0.0]
+
+        def runner(slug, sha):
+            state = states[min(len(calls), len(states) - 1)]
+            calls.append(state)
+            return state, f'{state} detail'
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+        return runner, {'sleep': sleep, 'clock': lambda: now[0]}, calls, sleeps
+
+    def test_wait_ci_pending_then_success_continues(self):
+        self.use_github_origin()
+        runner, clock, calls, sleeps = self.fake_ci('pending', 'pending', 'success')
+        code, out, err = self.in_process('1.0.17', '--skip-tests', '--wait-ci', ci_runner=runner, **clock)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(calls, ['pending', 'pending', 'success'])
+        self.assertEqual(sleeps, [30, 30])
+        self.assertIn('polling again in 30 s', out)
+        self.assertIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
+    def test_wait_ci_waits_for_checks_that_do_not_exist_yet(self):
+        self.use_github_origin()
+        runner, clock, calls, sleeps = self.fake_ci('missing', 'pending', 'success')
+        code, out, err = self.in_process('1.0.17', '--skip-tests', '--wait-ci', ci_runner=runner, **clock)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(calls, ['missing', 'pending', 'success'])
+        self.assertEqual(sleeps, [30, 30])
+        self.assertIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
+    def test_wait_ci_pending_then_failure_refuses(self):
+        self.use_github_origin()
+        runner, clock, calls, _ = self.fake_ci('pending', 'failure')
+        code, _, err = self.in_process('1.0.17', '--skip-tests', '--wait-ci', ci_runner=runner, **clock)
+        self.assertEqual(code, 1)
+        self.assertIn('are failure: failure detail', err)
+        self.assertEqual(calls, ['pending', 'failure'])
+        self.assertNotIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
+    def test_wait_ci_timeout_refuses(self):
+        self.use_github_origin()
+        runner, clock, calls, sleeps = self.fake_ci('pending')
+        code, _, err = self.in_process('1.0.17', '--skip-tests', '--wait-ci', '--ci-timeout', '2',
+                                       ci_runner=runner, **clock)
+        self.assertEqual(code, 1)
+        self.assertIn('still pending after 2 minute(s)', err)
+        self.assertEqual(sum(sleeps), 120)
+        self.assertEqual(len(calls), 5)
+        self.assertNotIn('v1.0.17', git(self.repo, 'tag', '--list'))
+        # Default timeout is 30 minutes.
+        runner, clock, calls, sleeps = self.fake_ci('pending')
+        code, _, err = self.in_process('1.0.17', '--skip-tests', '--wait-ci', ci_runner=runner, **clock)
+        self.assertEqual((code, sum(sleeps)), (1, 30 * 60))
+        self.assertIn('still pending after 30 minute(s)', err)
+
+    def test_without_wait_ci_pending_still_refuses_without_sleeping(self):
+        self.use_github_origin()
+        runner, clock, calls, sleeps = self.fake_ci('pending', 'success')
+        code, _, err = self.in_process('1.0.17', '--skip-tests', ci_runner=runner, **clock)
+        self.assertEqual(code, 1)
+        self.assertIn('are pending', err)
+        self.assertIn('--wait-ci', err)
+        self.assertEqual((calls, sleeps), (['pending'], []))
+        self.assertNotIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
+    def test_wait_ci_flag_combinations(self):
+        never = lambda slug, sha: self.fail('CI must not be queried')
+        for args in (('--ci-timeout', '5'), ('--wait-ci', '--skip-ci-check'), ('--wait-ci', '--ci-timeout', '0')):
+            with self.subTest(args=args), self.assertRaises(SystemExit) as raised,                     contextlib.redirect_stderr(io.StringIO()):
+                release.main(['1.0.17', '--skip-tests', *args, '--repo', str(self.repo)], ci_runner=never)
+            self.assertEqual(raised.exception.code, 2)
 
     def test_local_origin_skips_ci_check(self):
         def never(slug, sha):

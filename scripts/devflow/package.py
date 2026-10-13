@@ -104,11 +104,21 @@ def install(data, runtime, runtime_home, root=None):
             content = text.encode('utf-8')
             changes[target] = content
             hashes[relative] = digest(content)
-        # Preserve previously owned files no longer in this release; uninstall still knows them.
-        if existing:
-            for relative, hashed in existing['files'].items():
-                if relative not in hashes:
-                    hashes[relative] = hashed
+        # Owned files this release no longer ships: remove them if untouched, keep and report them if
+        # modified (they stay in the manifest so uninstall still preserves and reports them).
+        removed_obsolete, preserved_modified = [], []
+        for relative, hashed in (existing or {}).get('files', {}).items():
+            if relative in hashes:
+                continue
+            target = managed_path(home, relative, runtime)
+            if not target.exists():
+                continue
+            if target.is_file() and digest(target.read_bytes()) == hashed:
+                changes[target] = None
+                removed_obsolete.append(str(target))
+            else:
+                preserved_modified.append(str(target))
+                hashes[relative] = hashed
         shared = Path(data) / 'config/models.yaml'
         if not shared.exists():
             changes[shared] = json_bytes(selected)
@@ -117,6 +127,7 @@ def install(data, runtime, runtime_home, root=None):
         changes[manifest_path(data, runtime)] = json_bytes(manifest)
         backup = transaction(changes, Path(data) / 'backups')
         return {'runtime': runtime, 'runtime_home': str(home), 'files': len(hashes), 'backup': backup,
+                'removed_obsolete': removed_obsolete, 'preserved_modified': preserved_modified,
                 'message': 'Installed only owned files; existing runtime settings were not changed'}
 
 

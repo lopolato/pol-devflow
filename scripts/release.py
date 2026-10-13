@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Release pol-devflow from main: checks, tests, tag and optional push/install.
 
-Usage: python scripts/release.py VERSION [--push] [--install] [--skip-tests] [--skip-ci-check]
+Usage: python scripts/release.py VERSION [--push] [--install] [--skip-tests]
+                                 [--skip-ci-check | --wait-ci [--ci-timeout MINUTES]]
                                  [--evals [--yes]] [--dry-run]
 
 main is protected: the version bump, the VERIFICATION.md section and the README heading arrive
@@ -14,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 DEFAULT_REPO = Path(__file__).resolve().parents[1]
@@ -22,6 +24,8 @@ VERSION_RE = re.compile(r"""__version__\s*=\s*(['"])([^'"]+)\1""")
 EVALS_WARNING = ('WARNING: --evals launches real LLM sessions (claude) and spends tokens: '
                  'evals/check_claude_nesting.py and evals/run_evals.py --scenario lite-small-bug. '
                  'They evaluate the installed skill, not this checkout.')
+CI_POLL_SECONDS = 30
+CI_TIMEOUT_MINUTES = 30
 
 
 class ReleaseError(Exception):
@@ -73,7 +77,7 @@ def gh_check_runs(slug, sha):
 
 
 class Release:
-    def __init__(self, args, ci_runner=gh_check_runs):
+    def __init__(self, args, ci_runner=gh_check_runs, sleep=time.sleep, clock=time.monotonic):
         self.args = args
         self.repo = Path(args.repo).resolve()
         self.version = args.version
@@ -81,6 +85,8 @@ class Release:
         self.dry = args.dry_run
         self.py = sys.executable
         self.ci_runner = ci_runner
+        self.sleep = sleep
+        self.clock = clock
 
     # -- helpers -------------------------------------------------------
     def say(self, text):
@@ -190,10 +196,31 @@ class Release:
             self.say('WARNING: gh is not available or not authenticated; CI check skipped (verify it on GitHub)')
             return
         state, detail = status
+        # Right after a push GitHub may not have created the check runs yet: wait for them too.
+        if state in ('pending', 'missing') and self.args.wait_ci:
+            state, detail = self.wait_for_ci(slug, detail)
         if state != 'success':
             raise ReleaseError(f'CI checks of {self.sha[:12]} are {state}: {detail}. '
-                               'Wait for green checks or pass --skip-ci-check')
+                               'Wait for green checks (--wait-ci) or pass --skip-ci-check')
         self.say(f'CI checks: success ({detail})')
+
+    def wait_for_ci(self, slug, detail):
+        """Poll pending checks until they all complete; any failure or the timeout refuses."""
+        minutes = self.args.ci_timeout
+        deadline = self.clock() + minutes * 60
+        state = 'pending'
+        while state in ('pending', 'missing'):
+            remaining = deadline - self.clock()
+            if remaining <= 0:
+                raise ReleaseError(f'CI checks of {self.sha[:12]} still pending after {minutes} minute(s): '
+                                   f'{detail}. Nothing was tagged')
+            self.say(f'CI checks pending ({detail}); polling again in {CI_POLL_SECONDS} s')
+            self.sleep(min(CI_POLL_SECONDS, remaining))
+            status = self.ci_runner(slug, self.sha)
+            if status is None:
+                raise ReleaseError('gh became unavailable while waiting for CI; nothing was tagged')
+            state, detail = status
+        return state, detail
 
     def tests(self):
         self.say('== 3. Tests and package validation')
@@ -246,6 +273,10 @@ def build_parser():
     parser.add_argument('--install', action='store_true', help='install in the local runtimes and validate them')
     parser.add_argument('--skip-tests', action='store_true', help='do not run the tests locally (CI must be green)')
     parser.add_argument('--skip-ci-check', action='store_true', help='do not verify GitHub check runs of HEAD')
+    parser.add_argument('--wait-ci', action='store_true',
+                        help=f'when checks are pending, poll every {CI_POLL_SECONDS} s until they complete')
+    parser.add_argument('--ci-timeout', type=int, metavar='MINUTES',
+                        help=f'with --wait-ci: give up after MINUTES (default {CI_TIMEOUT_MINUTES})')
     parser.add_argument('--evals', action='store_true', help='also run the paid behaviour evals (asks first)')
     parser.add_argument('--yes', action='store_true', help='confirm --evals without asking')
     parser.add_argument('--dry-run', action='store_true', help='print every step without changing anything')
@@ -253,13 +284,22 @@ def build_parser():
     return parser
 
 
-def main(argv=None, ci_runner=gh_check_runs):
+def main(argv=None, ci_runner=gh_check_runs, sleep=time.sleep, clock=time.monotonic):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'):
             stream.reconfigure(encoding='utf-8', errors='replace')
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.ci_timeout is not None and not args.wait_ci:
+        parser.error('--ci-timeout only applies with --wait-ci')
+    if args.wait_ci and args.skip_ci_check:
+        parser.error('--wait-ci and --skip-ci-check are mutually exclusive')
+    if args.ci_timeout is not None and args.ci_timeout <= 0:
+        parser.error('--ci-timeout must be a positive number of minutes')
+    if args.ci_timeout is None:
+        args.ci_timeout = CI_TIMEOUT_MINUTES
     try:
-        Release(args, ci_runner).execute()
+        Release(args, ci_runner, sleep, clock).execute()
     except ReleaseError as error:
         print(f'release: error: {error}', file=sys.stderr)
         return 1

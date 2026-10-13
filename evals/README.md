@@ -19,7 +19,7 @@ Se evalúa la skill **instalada** en el runtime (p. ej. `~/.claude/skills/pol-de
 | `lite-small-bug` | rama `fix/`, ≤3 archivos de producto, main intacto, sin `docs/devflow`, tests verdes en la rama, checkout limpio |
 | `plan-only` | sin ramas, commits ni cambios en el working tree |
 | `lite-dirty-checkout` | con cambios del usuario sin commit: no hay commits y el cambio se conserva |
-| `auth-chooses-full` | tarea de permisos sin flag (en `--plan-only`): la transcripción menciona full |
+| `auth-chooses-full` | tarea de permisos sin flag (en `--plan-only`): riesgo alto, la transcripción menciona lite+review o full |
 | `cleanup-no-history` | `cleanup --apply` sin historial DevFlow: no se borra ninguna rama |
 | `lite-memory-opt-in` | con `docs/devflow/memory.json`: informe en `docs/devflow/reports/` en la rama `fix/` |
 

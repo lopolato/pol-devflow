@@ -25,7 +25,8 @@ run_id: <ejecución>
 task_id: <tarea>
 role: <perfil>
 objective: <resultado concreto>
-original_request: <petición o extracto pertinente>
+original_request: <título corto; no sustituye a request_ref>
+request_ref: <path y sha256 de la petición literal: el worker la lee primero; Coordinator nunca la parafrasea, objective solo añade la instrucción de la tarea>
 acceptance_criteria: []
 dependencies: []
 workspace: <ruta absoluta>

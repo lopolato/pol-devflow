@@ -217,7 +217,8 @@ class PilotFixTests(unittest.TestCase):
                                  'findings': [], 'files_inspected': [], 'commits': [], 'decisions': [],
                                  'validation': [], 'risks': [], 'out_of_scope': [], 'questions': [],
                                  'next_action': '',
-                                 'usage': {'model': None, 'tokens': None, 'duration_ms': None}})
+                                 'usage': {'model': None, 'tokens': None, 'duration_ms': None},
+                                 'request_ref': run['request_ref']})
         review = self.run_cli('template', run, '--task-id', reviewer['task_id'])
         self.assertEqual(review['review'], {'verdict': '', 'coverage': ''})
         self.cli('_run', 'template', '--run', run['run_id'], '--owner', 'intruder', '--task-id', explorer['task_id'],

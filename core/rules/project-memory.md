@@ -79,7 +79,7 @@ En el cierre, evaluar el impacto: funcionalidades/uso/estructura → contexto y 
 
 Con memoria activada, cada tarea full guarda un informe breve versionado con tipo, petición, antes/después, rutas, revisión de código comprobada, validaciones y resultados, impacto documental y pendientes. Para partial/blocked/cancelled separar lo observado de lo pendiente. Sin activación, esos datos van solo al informe final del chat.
 
-Lite con memoria activada: el worker lite escribe un único informe de pocos párrafos (comandos/resultados, sin datos privados) y, como mucho, actualiza la entrada del área tocada en el registro; no reconstruye la base ni amplía coverage fuera de esa área. Sus límites siguen siendo 3 archivos de producto, el informe y hasta 2 documentos/memoria directamente afectados; más exige full.
+Lite con memoria activada: el worker lite escribe un único informe de pocos párrafos (comandos/resultados, sin datos privados) y, como mucho, actualiza la entrada del área tocada en el registro; no reconstruye la base ni amplía coverage fuera de esa área. Sus límites siguen siendo el write scope asignado, el informe y hasta 2 documentos/memoria directamente afectados; más exige full.
 
 La documentación forma parte del cambio y sus checkpoints/review, no se añade silenciosamente después del cierre. Los archivos versionados permiten recuperar sus commits mediante Git; el informe no necesita contener el SHA del propio commit que lo guarda.
 

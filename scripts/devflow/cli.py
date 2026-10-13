@@ -79,6 +79,7 @@ def parser():
     p.add_argument('action', choices=('start', 'link', 'settle', 'account', 'review-diff', 'review', 'status'))
     p.add_argument('--mode', choices=('error', 'feature'))
     p.add_argument('--request')
+    p.add_argument('--request-file')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
     p.add_argument('--owner')
     p.add_argument('--lite')
@@ -140,6 +141,7 @@ def parser():
     p.add_argument('--mode', choices=state.MODES)
     p.add_argument('--runtime', choices=config.RUNTIMES)
     p.add_argument('--request')
+    p.add_argument('--request-file')
     p.add_argument('--criterion', action='append', default=[])
     p.add_argument('--base')
     p.add_argument('--reuse-branch')
@@ -262,10 +264,16 @@ def run_command(args, ctx):
         raise DevFlowError('Nesting flags only apply to task')
     if (getattr(args, 'max_workers', None) is not None or getattr(args, 'max_tokens', None) is not None) and args.action != 'start':
         raise DevFlowError('--max-workers/--max-tokens only apply to start; raise them with update budget')
+    request_file = getattr(args, 'request_file', None)
+    if request_file is not None and args.action != 'start':
+        raise DevFlowError('--request-file only applies to start')
     if args.action == 'start':
         require(args.mode, args.request, args.owner, args.runtime)
         if not args.criterion:
             raise DevFlowError('Supply acceptance --criterion before starting implementation')
+        if not args.request.strip():
+            raise DevFlowError('Run needs a nonempty --request')
+        literal = state.literal_request(args.request, request_file)
         budget = state.make_budget(getattr(args, 'max_workers', None), getattr(args, 'max_tokens', None))
         selected = config.load(config.active_path(data, root))
         if args.executor == 'orca':
@@ -285,7 +293,7 @@ def run_command(args, ctx):
         run = state.create(data, preflight['workspace'], args.mode, args.request, selected,
                             branch=info['branch'], revision=info['base_revision'], criteria=args.criterion,
                             workspace=info['workspace'], runtime=args.runtime, owner=args.owner,
-                            capabilities=adapters.capabilities(args.runtime), budget=budget)
+                            capabilities=adapters.capabilities(args.runtime), budget=budget, literal=literal)
         run['executor'] = args.executor
         if args.executor == 'orca':
             run['capabilities'].update(executor='orca', parallel_dispatch=True, parallel_writes=False,
@@ -346,6 +354,7 @@ def run_command(args, ctx):
             raise DevFlowError('No matching assignment for --task-id')
         template = state.empty_result(task, task.get('orca', {}).get('worker_id', ''))
         template['usage'] = {'model': None, 'tokens': None, 'duration_ms': None}
+        template['request_ref'] = run.get('request_ref')
         return template
     with state.RunLock(data, args.run, args.owner):
         run = state.load(data, args.run)
@@ -505,6 +514,7 @@ def run_command(args, ctx):
             return task
         elif args.action == 'record':
             require(args.input)
+            state.verify_request(run)
             result = read_json(args.input)
             if getattr(args, 'brief', False):
                 require(args.task_id)
@@ -719,6 +729,8 @@ def dispatch(args, ctx):
             raise DevFlowError('--review only applies to _lite start')
         if args.author_id is not None and args.action != 'review-diff':
             raise DevFlowError('--author-id only applies to _lite review-diff')
+        if getattr(args, 'request_file', None) is not None and args.action != 'start':
+            raise DevFlowError('--request-file only applies to _lite start')
         if args.action == 'status':
             require(args.lite)
             return lite.status(read_json(data / 'lite' / (safe_id(args.lite) + '.json')))
@@ -758,6 +770,7 @@ def dispatch(args, ctx):
             raise DevFlowError('--data-dir must be outside the source repository')
         if not args.request.strip():
             raise DevFlowError('Lite needs a nonempty request')
+        literal = state.literal_request(args.request, getattr(args, 'request_file', None))
         info = gitops.lite_branch(ctx.repo, args.mode, args.request, args.base)
         lite_id = 'lite-' + uuid.uuid4().hex[:12]
         record = {'schema_version': 1, 'kind': 'lite', 'id': lite_id, 'repository': info['workspace'],
@@ -767,7 +780,8 @@ def dispatch(args, ctx):
                   'created_at': now(), 'features': []}
         record.update(executor=args.executor, coordinator_id=args.owner, task_id=lite_id,
                       workspace=info['workspace'], status='pending', review_required=args.review,
-                      untracked_preserved=info.get('untracked_preserved', []))
+                      untracked_preserved=info.get('untracked_preserved', []),
+                      request_ref=state.write_request(data / 'lite' / (lite_id + '.request.md'), literal))
         identity = gitops.identity(info['workspace'])
         state.mark_features(record, 'level:lite+review' if args.review else 'level:lite',
                             args.executor == 'orca' and 'executor:orca', identity.get('warning') and 'identity_warning')

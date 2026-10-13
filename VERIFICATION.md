@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.18)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.19)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -158,3 +158,14 @@ Origen: piloto en un proyecto de facturación. La corrección técnica pasó 815
 - Pautas: pruebas y revisión de lectura en paralelo sobre el candidato limpio, regresión exacta antes del fix y suite completa una sola vez al final.
 - Pruebas: 4 nuevas en test_efficiency.py (expansión de entregas breves e identidades, reviewer breve con usage, revisión incremental con cobertura independiente y diff completo conservado, estadísticas por actividad); ajustes menores en test_lifecycle, test_pilot_fixes y test_report_regressions. CI en verde en Windows y Ubuntu (PR #2).
 - Nota redactada al publicar, a partir del diff y los tests de la versión.
+
+## 1.0.19 · Mejor criterio, menos pérdidas · 13/10/2026
+
+Ideas tomadas de gentle-ai v4.1.0 (delegar por un motivo y no por tamaño; especificación literal por referencia; limpieza al retirar; control de deriva de la documentación), adaptadas a DevFlow.
+
+- Nivel por riesgo y comprensión, no por número de archivos. Riesgo alto: permisos/accesos/seguridad; dinero (importes, IVA, facturas, cobros, pagos); comunicaciones a clientes; datos (migraciones, borrados, estructura); concurrencia y tareas automáticas. Riesgo alto nunca va a lite simple (lite+review si es pequeño y se entiende; full en el resto). Sin comprensión suficiente o con partes independientes, full. Desaparece el límite de 3 archivos: pol-lite escribe solo en su write scope asignado y escala si necesita salir de él. Las instrucciones que lee el modelo bajan una línea.
+- Petición literal por referencia: `_run start` y `_lite start` aceptan `--request-file` (UTF-8, no vacía, hasta 64 KiB) o guardan `--request` como `inline`, en `request.md` con `request_ref` (ruta, sha256, origen, bytes). Va en cada encargo, plantilla y salida de lite; `record` y `_lite review` rechazan el trabajo si el archivo cambió. Los workers la leen primero y el Coordinator no la sustituye por un resumen.
+- Mantenimiento: el instalador borra los archivos propios que una versión deja de incluir si siguen intactos (`removed_obsolete`) y conserva y avisa de los modificados (`preserved_modified`). tests/test_docs_consistency.py comprueba que cada comando, acción y flag citado en la documentación existe en el CLI (sin discrepancias al publicar).
+- `release.py --wait-ci [--ci-timeout MIN]`: espera a que la CI termine, también cuando las comprobaciones aún no existen justo después de un push; falla si alguna falla o se agota el tiempo.
+- Evaluación `auth-chooses-full` actualizada: una tarea pequeña de permisos debe elegir lite+review o full.
+- Pruebas: test_request_ref.py (8), test_install_obsolete.py (4), test_docs_consistency.py (7) y 6 nuevas de `--wait-ci` en test_release.py; 15 de las nuevas fallan contra la 1.0.18. Suite completa: 282 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido.

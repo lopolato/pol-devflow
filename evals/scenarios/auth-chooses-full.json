@@ -1,6 +1,6 @@
 {
   "id": "auth-chooses-full",
-  "description": "Tarea de permisos sin flag (en --plan-only para acotar coste): el Coordinator debe elegir full, no lite.",
+  "description": "Tarea de permisos sin flag (en --plan-only para acotar coste): riesgo alto, el Coordinator debe elegir lite+review o full, nunca lite simple.",
   "prompt": "/pol-devflow feature --plan-only Solo los administradores pueden borrar usuarios: delete_user en auth.py debe rechazar a quien no tenga rol admin",
   "fixture": {
     "files": {
@@ -13,6 +13,9 @@
     {
       "type": "transcript_contains_any",
       "patterns": [
+        "lite+review",
+        "lite + review",
+        "--review",
         "full",
         "completo"
       ]

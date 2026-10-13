@@ -7,7 +7,7 @@ import re
 import uuid
 from pathlib import Path
 from . import config
-from .storage import DevFlowError, FileLock, atomic_write, json_bytes, now, read_json, safe_id
+from .storage import DevFlowError, FileLock, atomic_write, digest, json_bytes, now, read_json, safe_id
 
 MODES = ('error', 'feature', 'optimize')
 FINAL_STATES = ('completed', 'partial', 'blocked', 'cancelled')
@@ -20,10 +20,53 @@ INCIDENT_STATUSES = ('resolved', 'not_verified', 'different_cause', 'accepted_un
 CODE_MAP_LIMIT = 50
 LIST_FIELDS = ('criteria_results', 'findings', 'files_inspected', 'files_changed', 'commits',
                'decisions', 'validation', 'risks', 'out_of_scope', 'questions')
+REQUEST_LIMIT = 64 * 1024
+REQUEST_CHANGED = 'Literal request changed after start; start a new run or restore it'
 
 
 def run_dir(data, run_id):
     return Path(data) / 'runs' / safe_id(run_id)
+
+
+def literal_request(request, request_file=None):
+    """(bytes, source) of the user's literal message, validated before any Git or state write."""
+    if request_file is None:
+        content, source = (request or '').encode('utf-8'), 'inline'
+    else:
+        try:
+            if Path(request_file).stat().st_size > REQUEST_LIMIT:
+                raise DevFlowError(f'--request-file exceeds {REQUEST_LIMIT} bytes (64 KiB)')
+            content, source = Path(request_file).read_bytes(), 'file'
+        except OSError as exc:
+            raise DevFlowError(f'Cannot read --request-file {request_file}: {exc}') from exc
+    if len(content) > REQUEST_LIMIT:
+        raise DevFlowError(f'Literal request exceeds {REQUEST_LIMIT} bytes (64 KiB)')
+    try:
+        text = content.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        raise DevFlowError('Literal request must be UTF-8 text') from None
+    if not text.strip():
+        raise DevFlowError('Literal request is empty')
+    return content, source
+
+
+def write_request(path, literal):
+    """Store the literal request verbatim; the reference lets workers read it and gates detect edits."""
+    content, source = literal
+    atomic_write(path, content)
+    return {'path': str(Path(path).resolve()), 'sha256': digest(content), 'source': source, 'bytes': len(content)}
+
+
+def verify_request(record):
+    ref = record.get('request_ref')
+    if not ref:
+        return  # Records started before 1.0.19 have no literal request file.
+    try:
+        unchanged = digest(Path(ref['path']).read_bytes()) == ref['sha256']
+    except OSError:
+        unchanged = False
+    if not unchanged:
+        raise DevFlowError(REQUEST_CHANGED)
 
 
 class RunLock(FileLock):
@@ -32,9 +75,10 @@ class RunLock(FileLock):
 
 
 def create(data, repository, mode, request, model_config, branch, revision, criteria,
-           workspace=None, runtime='codex', owner='coordinator', capabilities=None, budget=None):
+           workspace=None, runtime='codex', owner='coordinator', capabilities=None, budget=None, literal=None):
     if mode not in MODES or runtime not in config.RUNTIMES or not request.strip():
         raise DevFlowError('Run needs a valid mode/runtime and nonempty request')
+    literal = literal or literal_request(request)
     if not criteria or not all(isinstance(c, str) and c.strip() for c in criteria):
         raise DevFlowError('Define acceptance criteria before starting implementation')
     if len(set(criteria)) != len(criteria):
@@ -57,6 +101,7 @@ def create(data, repository, mode, request, model_config, branch, revision, crit
            'review_required': False, 'review': None, 'findings': [], 'attempts': {}, 'decisions': [],
            'questions': [], 'measurement': None, 'incident': None, 'next_action': 'Inspect workflow and assign the next task',
            'events': [], 'features': [], 'budget': budget or make_budget()}
+    run['request_ref'] = write_request(run_dir(data, run_id) / 'request.md', literal)
     save(data, run, 'created')
     return run
 
@@ -321,6 +366,7 @@ def make_task(run, role, objective, write_scope, read_scope=None, dependencies=N
         raise DevFlowError('Correction budget exhausted for this logical issue; preserve work and stop')
     task = {'schema_version': 1, 'run_id': run['run_id'], 'task_id': task_id,
             'role': role, 'objective': objective, 'original_request': run['request'],
+            'request_ref': copy.deepcopy(run.get('request_ref')),
             'acceptance_criteria': run['acceptance_criteria'], 'dependencies': dependencies or [],
             'workspace': run['workspace'], 'branch': run['branch'], 'base_revision': run['base_revision'],
             'candidate_revision': run['current_revision'], 'read_scope': read_scope or [],
