@@ -11,7 +11,8 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from devflow import profile
 
 USAGE_MISSING = 'usage not recorded for this task'
-EMPTY_CONTEXT = {'profile': {'source': None, 'codegraph': None}, 'codegraph': None, 'rules_count': 0, 'errors': []}
+EMPTY_CONTEXT = {'profile': {'source': None, 'codegraph': None, 'python': None}, 'codegraph': None, 'python': None,
+                 'rules_count': 0, 'errors': []}
 
 
 def rule(text, paths, kind='requirement'):

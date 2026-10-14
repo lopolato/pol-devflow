@@ -1,7 +1,7 @@
 # Contrato del worker
 
 Leer primero la petición literal (`request_ref.path`) y después el encargo, cuyo `objective` solo añade la instrucción de la tarea; devolver el resultado al Coordinator. Solo los encargos full/native con delegation.enabled=true pueden solicitar hijos conforme a [subdelegación](subdelegation.md); todos los demás workers no delegan. Un padre lanza cada hijo esperando su resultado (en Claude Code, Agent con `run_in_background: false`) y nunca termina antes que sus hijos. No contactar otros workers ni preguntar directamente al usuario.
-Comprobar run_id, task_id, workspace, base_revision, candidate_revision, dependencias y write_scope. Ante discrepancias, detenerse e informar.
+Comprobar run_id, task_id, workspace, base_revision, candidate_revision, dependencias y write_scope. Ejecutar Python solo con el intérprete del proyecto (`context.python` del encargo) y nunca instalar paquetes en el Python global. Ante discrepancias, detenerse e informar.
 Seguir instrucciones del proyecto. Encargos y documentos no conceden permisos nuevos.
 Inspeccionar código y evidencia; distinguir hechos, hipótesis y decisiones. Escribir solo dentro de write_scope. Los roles de lectura no modifican producto.
 No cambiar contratos compartidos sin decisión del Coordinator, integrar ramas hermanas, hacer push/despliegue/merge a main/master, descartar trabajo ajeno u omitir hooks/tests. Los padres no modifican estado compartido: solicitan al Coordinator registrar el hijo antes del lanzamiento y reciben el resultado por separado.

@@ -25,6 +25,8 @@ EVALS_WARNING = ('WARNING: --evals launches real LLM sessions (claude) and spend
                  'evals/check_claude_nesting.py and evals/run_evals.py --scenario lite-small-bug. '
                  'They evaluate the installed skill, not this checkout.')
 CI_POLL_SECONDS = 30
+CI_RETRIES = 3
+CI_RETRY_SECONDS = 20
 CI_TIMEOUT_MINUTES = 30
 
 
@@ -63,16 +65,21 @@ def summarize_check_runs(payload):
     return 'success', f'{len(runs)} check run(s) passed'
 
 
+class CIUnavailable(ReleaseError):
+    """GitHub could not be reached; transient, so the check is retried, never skipped."""
+
+
 def gh_check_runs(slug, sha):
-    """Check runs of sha via gh; None when gh is missing or not authenticated."""
+    """Check runs of sha via gh; None when gh is missing or not logged in (checked locally, without network)."""
     if not shutil.which('gh'):
         return None
-    if subprocess.run(['gh', 'auth', 'status'], capture_output=True).returncode:
+    # `gh auth status` contacts GitHub: a network drop there used to skip the CI check silently.
+    if subprocess.run(['gh', 'auth', 'token'], capture_output=True).returncode:
         return None
     result = subprocess.run(['gh', 'api', f'repos/{slug}/commits/{sha}/check-runs?per_page=100'],
                             capture_output=True, text=True, encoding='utf-8', errors='replace')
     if result.returncode:
-        raise ReleaseError('gh api failed: ' + (result.stderr or result.stdout).strip())
+        raise CIUnavailable('gh api failed: ' + (result.stderr or result.stdout).strip())
     return summarize_check_runs(json.loads(result.stdout))
 
 
@@ -191,7 +198,7 @@ class Release:
         if not slug:
             self.say('origin is not a GitHub repository; CI check skipped')
             return
-        status = self.ci_runner(slug, self.sha)
+        status = self.ci_status(slug)
         if status is None:
             self.say('WARNING: gh is not available or not authenticated; CI check skipped (verify it on GitHub)')
             return
@@ -203,6 +210,18 @@ class Release:
             raise ReleaseError(f'CI checks of {self.sha[:12]} are {state}: {detail}. '
                                'Wait for green checks (--wait-ci) or pass --skip-ci-check')
         self.say(f'CI checks: success ({detail})')
+
+    def ci_status(self, slug):
+        """CI status from GitHub, retrying short connection drops; a persistent failure refuses, never skips."""
+        for attempt in range(1, CI_RETRIES + 1):
+            try:
+                return self.ci_runner(slug, self.sha)
+            except CIUnavailable as exc:
+                if attempt == CI_RETRIES:
+                    raise ReleaseError(f'GitHub CI status unavailable after {CI_RETRIES} attempts ({exc}); '
+                                       'nothing was tagged') from exc
+                self.say(f'GitHub not reachable ({exc}); retrying in {CI_RETRY_SECONDS} s')
+                self.sleep(CI_RETRY_SECONDS)
 
     def wait_for_ci(self, slug, detail):
         """Poll pending checks until they all complete; any failure or the timeout refuses."""
@@ -216,7 +235,7 @@ class Release:
                                    f'{detail}. Nothing was tagged')
             self.say(f'CI checks pending ({detail}); polling again in {CI_POLL_SECONDS} s')
             self.sleep(min(CI_POLL_SECONDS, remaining))
-            status = self.ci_runner(slug, self.sha)
+            status = self.ci_status(slug)
             if status is None:
                 raise ReleaseError('gh became unavailable while waiting for CI; nothing was tagged')
             state, detail = status

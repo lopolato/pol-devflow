@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.21)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.22)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -192,3 +192,10 @@ Ideas adaptadas de gentle-ai (MIT); análisis completo en docs/analisis-gentle-a
 - Contexto: `status --brief [--run ID]` y `_run show --brief` dan un resumen compacto (40 líneas como máximo) para recuperar el estado tras una compactación sin cargar toda la ejecución; reglas de contexto con números (≤3 llamadas o ~10.000 tokens en línea; explorador con ≤ ~2.000 tokens y `archivo:línea`; salidas acotadas; aviso hacia ~150.000 tokens). Formateadores antes de revisar.
 - Pruebas: test_refutation.py (10), test_scoped_review.py (5) y test_status_brief.py (4); las 19 fallan contra la 1.0.20. Suite completa: 322 casos, 1 omitido. Las instrucciones que lee el modelo crecen 6 líneas.
 - Política de pruebas: la suite completa en este equipo tarda ~20–25 minutos (Python de la Microsoft Store), frente a ~1 minuto en la CI de Ubuntu. Desde esta versión, en local solo se ejecutan los tests afectados; la suite completa la ejecuta la CI en Windows y Linux, y `release.py` se usa con `--skip-tests` sobre un commit ya validado por la CI.
+
+## 1.0.22 · Python del proyecto y publicación robusta · 15/10/2026
+
+- `_profile show` y el `context` de start incluyen `python`: el entorno virtual del proyecto (`.venv`, `venv` o `env` en la raíz o un nivel por debajo, p. ej. `backend/.venv`), buscado en el checkout principal porque los worktrees de tarea no lo contienen. Avisa si el entorno se creó con el Python de la Microsoft Store. Coordinator, pol-lite y workers ejecutan Python con ese intérprete y nunca instalan en el Python global.
+- `release.py`: la autenticación de `gh` se comprueba en local (`gh auth token`). Antes, `gh auth status` consultaba GitHub y un corte de red hacía saltarse la comprobación de la CI con solo un aviso. Los cortes de conexión se reintentan 3 veces (20 s) al comprobar y durante `--wait-ci`; si persisten, la publicación se detiene sin etiquetar.
+- Origen: migración del equipo del usuario del Python de la Microsoft Store al de python.org, y dos cortes de conexión con GitHub durante la publicación de la 1.0.21.
+- Pruebas: test_python_env.py (3) y 3 nuevas en test_release.py; ajuste del contexto esperado en test_auto_context.py.

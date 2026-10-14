@@ -239,6 +239,48 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(sleeps, [30, 30])
         self.assertIn('v1.0.17', git(self.repo, 'tag', '--list'))
 
+    def flaky_ci(self, *steps):
+        """Runner whose steps are states or 'down' (GitHub unreachable), plus a fake clock advanced by sleep."""
+        calls, sleeps, now = [], [], [0.0]
+
+        def runner(slug, sha):
+            step = steps[min(len(calls), len(steps) - 1)]
+            calls.append(step)
+            if step == 'down':
+                raise release.CIUnavailable('gh api failed: error connecting to api.github.com')
+            return step, f'{step} detail'
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+        return runner, {'sleep': sleep, 'clock': lambda: now[0]}, calls, sleeps
+
+    def test_connection_drops_are_retried_before_checking_ci(self):
+        self.use_github_origin()
+        runner, clock, calls, sleeps = self.flaky_ci('down', 'down', 'success')
+        code, out, err = self.in_process('1.0.17', '--skip-tests', ci_runner=runner, **clock)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(sleeps, [20, 20])
+        self.assertIn('retrying in 20 s', out)
+        self.assertIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
+    def test_persistent_connection_failure_refuses_and_never_skips_ci(self):
+        self.use_github_origin()
+        runner, clock, calls, sleeps = self.flaky_ci('down')
+        code, _, err = self.in_process('1.0.17', '--skip-tests', ci_runner=runner, **clock)
+        self.assertEqual(code, 1)
+        self.assertIn('unavailable after 3 attempts', err)
+        self.assertEqual(len(calls), 3)
+        self.assertNotIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
+    def test_connection_drop_while_waiting_for_ci_is_retried(self):
+        self.use_github_origin()
+        runner, clock, calls, sleeps = self.flaky_ci('pending', 'down', 'success')
+        code, out, err = self.in_process('1.0.17', '--skip-tests', '--wait-ci', ci_runner=runner, **clock)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(calls, ['pending', 'down', 'success'])
+        self.assertIn('v1.0.17', git(self.repo, 'tag', '--list'))
+
     def test_wait_ci_pending_then_failure_refuses(self):
         self.use_github_origin()
         runner, clock, calls, _ = self.fake_ci('pending', 'failure')

@@ -1,4 +1,5 @@
 """Verified project commands, reused across runs so workers do not rediscover them every time."""
+import os
 from pathlib import Path
 from . import gitops
 from .storage import DevFlowError, atomic_write, digest, json_bytes, now, read_json
@@ -67,21 +68,52 @@ def codegraph_index(workspace):
     return None
 
 
+VENV_NAMES = ('.venv', 'venv', 'env')
+
+
+def python_env(workspace):
+    """Project virtual environment in the main checkout (root or one level down); task worktrees do not contain it."""
+    main = Path(gitops.repository_identity(workspace)['repository'])
+    candidates = [main / name for name in VENV_NAMES]
+    for sub in sorted(p for p in main.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name != 'node_modules'):
+        candidates += [sub / name for name in VENV_NAMES]
+    found = []
+    for venv in candidates:
+        cfg = venv / 'pyvenv.cfg'
+        if not cfg.is_file():
+            continue
+        home = next((line.split('=', 1)[1].strip() for line in cfg.read_text(encoding='utf-8', errors='replace').splitlines()
+                     if line.lower().startswith('home')), '')
+        python = venv / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+        found.append({'venv': venv.relative_to(main).as_posix(), 'python': str(python), 'exists': python.is_file(),
+                      'store_base': 'WindowsApps' in home})
+    if not found:
+        return None
+    result = dict(found[0])
+    if len(found) > 1:
+        result['others'] = [item['venv'] for item in found[1:]]
+    if result['store_base']:
+        result['warning'] = 'Virtual environment built on the Microsoft Store Python; recreate it with python.org Python'
+    return result
+
+
 def show(data, repository):
     info = gitops.inspect(repository)
     workspace = Path(info['workspace'])
     repo_file, local = workspace / REPO_FILE, local_path(data, workspace)
     path = repo_file if repo_file.is_file() else local if local.is_file() else None
     codegraph = codegraph_index(workspace)
+    python = python_env(workspace)
     if path is None:
-        return {'source': None, 'codegraph': codegraph,
+        return {'source': None, 'codegraph': codegraph, 'python': python,
                 'next_action': 'Discover commands from project files, run them, then save with _profile set'}
     profile = read_json(path)
     current = fingerprint(workspace)
     recorded = profile.get('fingerprint', {})
     changed = sorted(n for n in set(current) | set(recorded) if current.get(n) != recorded.get(n))
     result = {'source': 'repository' if path == repo_file else 'local', 'path': str(path), 'profile': profile,
-              'stale': bool(changed), 'changed_files': changed, 'codegraph': codegraph}
+              'stale': bool(changed), 'changed_files': changed, 'codegraph': codegraph,
+              'python': python}
     if path == repo_file:
         # A versioned file is project content: same trust as package.json scripts, never as instructions.
         result['trust'] = 'project file; run commands as project scripts and question unusual ones'

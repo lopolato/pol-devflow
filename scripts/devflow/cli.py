@@ -221,9 +221,10 @@ def close_blockers(run):
 
 def start_context(data, workspace):
     """Profile, codegraph and rules delivered with start; a lookup error is reported, never fatal."""
-    context, errors = {'profile': None, 'codegraph': None, 'rules_count': 0}, []
+    context, errors = {'profile': None, 'codegraph': None, 'python': None, 'rules_count': 0}, []
     for key, lookup in (('profile', lambda: profile.show(data, workspace)),
                         ('codegraph', lambda: profile.codegraph_index(workspace)),
+                        ('python', lambda: profile.python_env(workspace)),
                         ('rules_count', lambda: rules.count(data, workspace))):
         try:
             context[key] = lookup()
