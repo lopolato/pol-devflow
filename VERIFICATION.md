@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.20)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.21)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -180,3 +180,15 @@ Motivada por datos reales de 14 ejecuciones: 13 en full con revisión obligatori
 - Contexto automático: `_run start` y `_lite start` devuelven `context` (perfil, codegraph, número de reglas); cada encargo con alcance trae sus `rules`; `record` devuelve `warnings` (uso no registrado, autorrevisión ausente); `check-close` propone un `retro_draft` con hechos de la ejecución. Las instrucciones dejan de pedir esas consultas a mano.
 - Higiene: `status` lista `stale_runs` (activas sin actividad más de 24 h) y `_run abandon --run ID --reason TEXT --confirm-stale` las cierra como canceladas sin tocar ramas ni worktrees.
 - Pruebas: test_first_pass.py (9) y test_auto_context.py (11); 18 de 20 fallan contra la 1.0.19 (las otras 2 protegen comportamiento existente). Suite completa: 303 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido. Las instrucciones que lee el modelo crecen 2 líneas.
+
+## 1.0.21 · Revisión precisa y contexto acotado · 14/10/2026
+
+Ideas adaptadas de gentle-ai (MIT); análisis completo en docs/analisis-gentle-ai.md. Objetivo: reducir las ~2 revisiones y ~1,3 fixers por ejecución observados.
+
+- Refutación antes de corregir: `_run task --role reviewer --refute-from REVIEW_TASK` asigna a un reviewer independiente (ni autor, ni Coordinator, ni el reviewer original) que devuelve `corroborated`, `refuted` o `inconclusive` para cada bloqueo, sin hallazgos nuevos. Un bloqueo refutado cuenta como resuelto. El fixer solo se asigna con algún bloqueo corroborado; sin refutación o con solo dudosos, decide el usuario (`--user-approved TEXT`).
+- Re-revisión acotada: con `--review-from`, el reviewer recibe `scope: "validation"` y `frozen_findings`; un bloqueo nuevo fuera de los archivos corregidos se rechaza y debe informarse como seguimiento no bloqueante.
+- Una sola corrección por candidato: si la re-revisión acotada vuelve a pedir cambios, otra corrección exige `--user-approved TEXT`, que basta por sí sola (no se pide además `--blockers-confirmed`).
+- Filtro de precisión del reviewer: solo defectos reales con evidencia; el estilo no bloquea; una pasada por lente.
+- Contexto: `status --brief [--run ID]` y `_run show --brief` dan un resumen compacto (40 líneas como máximo) para recuperar el estado tras una compactación sin cargar toda la ejecución; reglas de contexto con números (≤3 llamadas o ~10.000 tokens en línea; explorador con ≤ ~2.000 tokens y `archivo:línea`; salidas acotadas; aviso hacia ~150.000 tokens). Formateadores antes de revisar.
+- Pruebas: test_refutation.py (10), test_scoped_review.py (5) y test_status_brief.py (4); las 19 fallan contra la 1.0.20. Suite completa: 322 casos, 1 omitido. Las instrucciones que lee el modelo crecen 6 líneas.
+- Política de pruebas: la suite completa en este equipo tarda ~20–25 minutos (Python de la Microsoft Store), frente a ~1 minuto en la CI de Ubuntu. Desde esta versión, en local solo se ejecutan los tests afectados; la suite completa la ejecuta la CI en Windows y Linux, y `release.py` se usa con `--skip-tests` sobre un commit ya validado por la CI.

@@ -39,12 +39,12 @@ Este repositorio es la fuente única. `main` está protegida en GitHub: exige lo
 
 ```text
 git switch -c feat/X                      # editar en una rama
-python -m unittest discover -s tests      # incluye test_docs_consistency; y python scripts/validate.py
+python -m unittest tests.test_X tests.test_docs_consistency   # solo los tests afectados + python scripts/validate.py
 # versión: scripts/devflow/__init__.py, sección "## X.Y.Z" en VERIFICATION.md,
 #          primer título "# Pol DevFlow X.Y.Z" en README.md y línea en su Historial
 git push -u origin feat/X                 # CI corre en la rama
 git switch main && git merge --ff-only feat/X && git push origin main
-python scripts/release.py X.Y.Z --wait-ci --push --install
+python scripts/release.py X.Y.Z --wait-ci --skip-tests --push --install   # la CI ya pasó la suite completa
 ```
 
 `scripts/release.py` no edita ni confirma nada: comprueba main limpia y al día con origin, versión mayor que el último tag y ya declarada en `__init__.py`, VERIFICATION y README; verifica los checks de GitHub del commit con `gh` si está autenticado (`--skip-ci-check` para omitirlo): sin `--wait-ci` rechaza checks pendientes; con `--wait-ci [--ci-timeout MINUTES]` (30 por defecto) consulta cada 30 s hasta que terminan y rechaza si alguno falla o se agota el tiempo; ejecuta tests y `validate.py` (`--skip-tests` avisa de que CI debe estar en verde); crea el tag anotado `vX.Y.Z`; con `--push` publica main y el tag de forma atómica, y con `--install` instala en ambos runtimes (retirando los archivos propios obsoletos que siguen intactos y conservando los editados) y valida cada instalación. `--dry-run` muestra cada paso sin cambiar nada. `--evals` ejecuta además `evals/check_claude_nesting.py` y el escenario `lite-small-bug` (gastan tokens; pide confirmación o `--yes`).

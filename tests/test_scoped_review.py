@@ -160,9 +160,9 @@ class ScopedReviewTests(unittest.TestCase):
                     '--correction-key', 'k1', *extra, ok=False))
         self.assertEqual(self.state_bytes(run), before)
         statement = 'User approved a second correction of F1'
+        # The user's decision alone is enough: no second confirmation is asked for.
         task = self.run_cli('task', run, '--role', 'fixer', '--objective', 'fix again', '--write-scope', 'app.py',
-                            '--correction-key', 'k1', '--user-approved', statement,
-                            '--blockers-confirmed', 'F1 reproduced again')
+                            '--correction-key', 'k1', '--user-approved', statement)
         self.assertEqual(task['user_approved'], statement)
 
     def test_passed_scoped_review_needs_no_user(self):

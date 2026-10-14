@@ -533,7 +533,8 @@ def run_command(args, ctx):
                 if gate:
                     raise DevFlowError(gate)
             rounds = state.changes_required_reviews(run)
-            if args.role == 'fixer' and rounds >= 2 and confirmed is None:
+            # An explicit user decision already covers the blocker check; don't ask twice.
+            if args.role == 'fixer' and rounds >= 2 and confirmed is None and approved is None:
                 raise DevFlowError(f'{rounds} reviews already required changes: before another fixer, verify that the '
                                    'latest blockers are real blockers and not suggestions, then pass '
                                    '--blockers-confirmed TEXT stating what you checked')
