@@ -10,7 +10,7 @@ from .storage import DevFlowError, FileLock, atomic_write, data_home, digest, js
 
 HELP = {
     'general': 'pol-devflow: error | feature [--lite|--full] [--review] [--plan-only] <description>; optimize [--plan-only] <description>\n'
-               'help [topic] | status [--run ID] | stats [--all] [--since DAYS] [--features] | config [show|validate|set] | cleanup [--apply] [--discard BRANCH] [--purge-history]\n'
+               'help [topic] | status [--run ID] [--brief] | stats [--all] [--since DAYS] [--features] | config [show|validate|set] | cleanup [--apply] [--discard BRANCH] [--purge-history]\n'
                'The skill Coordinator executes workflows through native session tools.\n'
                'The Python CLI provides deterministic support; it is not a standalone LLM agent.',
     'error': 'error [--lite|--full] [--review] [--plan-only] <description>: diagnose, fix and verify the reported defect.',
@@ -25,7 +25,8 @@ HELP = {
                '--orca-idle-confirmed records verified runtime inactivity. History is retained by default; '
                '--purge-history explicitly removes eligible closed-run history after separate confirmation.',
     'optimize': 'optimize [--plan-only] <description>: baseline, change, comparable measurement and functional checks.',
-    'status': 'status [--run ID]: read recorded state and contrast Git revision; never resume a worker. '
+    'status': 'status [--run ID] [--brief]: read recorded state and contrast Git revision; never resume a worker. '
+              '--brief prints a compact summary (next_action, open tasks and blockers) for context recovery. '
               'Without --run it lists stale_runs (active, idle over 24 h); after user confirmation '
               '_run abandon --run ID --reason TEXT --confirm-stale cancels one, preserving branch and worktree.',
     'config': 'config [show|validate]\nconfig set --runtime codex|claude --role ROLE '
@@ -91,6 +92,7 @@ def parser():
     p.add_argument('--author-id')
     p = commands.add_parser('status')
     p.add_argument('--run')
+    p.add_argument('--brief', action='store_true')
     p = commands.add_parser('stats')
     p.add_argument('--all', action='store_true')
     p.add_argument('--since', type=int)
@@ -170,6 +172,8 @@ def parser():
     p.add_argument('--native-max-workers', type=int)
     p.add_argument('--context-from', action='append', default=[])
     p.add_argument('--review-from')
+    p.add_argument('--refute-from')
+    p.add_argument('--user-approved')
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--brief', action='store_true')
     p.add_argument('--author-name')
@@ -249,6 +253,37 @@ def check_lenses(run, task, review):
         raise DevFlowError('Review coverage must address every planned lens: missing ' + ', '.join(missing))
 
 
+def check_refutation(run, task, result):
+    """Refute-mode reviewer: no lens coverage needed, but an independent refuter."""
+    review = result.get('review')
+    if review is not None and (not isinstance(review, dict)
+                               or review.get('verdict') not in ('passed', 'changes_required', 'incomplete')
+                               or not isinstance(review.get('coverage'), str) or not review['coverage'].strip()):
+        raise DevFlowError('A refutation review, when given, needs a valid verdict and nonempty coverage')
+    source = next((t for t in run['tasks'] if t['task_id'] == task['refute']['from_task']), None)
+    reviewer = ((source or {}).get('result') or {}).get('worker_id')
+    worker = result['worker_id']
+    if worker in run['authors'] or worker == run.get('coordinator_id') or worker == reviewer:
+        raise DevFlowError('Refutation needs an independent reviewer: not an author, the Coordinator '
+                           'or the reviewer whose blockers are refuted')
+
+
+def compact_json(value):
+    """JSON with one line per key and per list object, so a brief stays short."""
+    def dumps(item):
+        return json.dumps(item, ensure_ascii=False)
+    items, lines = list(value.items()), ['{']
+    for index, (key, item) in enumerate(items):
+        comma = ',' if index < len(items) - 1 else ''
+        if isinstance(item, list) and item and all(isinstance(x, dict) for x in item):
+            lines.append(f'  {dumps(key)}: [')
+            lines.extend(f'    {dumps(x)}' + (',' if i < len(item) - 1 else '') for i, x in enumerate(item))
+            lines.append('  ]' + comma)
+        else:
+            lines.append(f'  {dumps(key)}: {dumps(item)}{comma}')
+    return '\n'.join(lines + ['}'])
+
+
 def record_warnings(run, task, result, usage):
     warnings = []
     if usage is None and not any(m.get('task_id') == task['task_id'] for m in run.get('metrics', [])):
@@ -264,7 +299,7 @@ def prepare_brief_result(run, task, brief):
     allowed = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision',
                'result_revision', 'files_inspected', 'commits', 'decisions', 'validation', 'findings',
                'criteria_results', 'risks', 'out_of_scope', 'questions', 'next_action', 'review', 'usage',
-               'self_review'}
+               'self_review', 'refutation'}
     required = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision', 'result_revision'}
     if not isinstance(brief, dict) or set(brief) - allowed or required - set(brief):
         raise DevFlowError('Brief result requires explicit run/task/worker identity, role, status, summary, observed_revision and result_revision; only factual evidence fields are accepted')
@@ -273,9 +308,10 @@ def prepare_brief_result(run, task, brief):
             raise DevFlowError(f'Brief {key} does not match the recorded assignment')
     live = gitops.inspect(task['workspace'])
     result = state.empty_result(task, brief['worker_id'])
+    result.pop('refutation', None)
     for field in ('status', 'summary', 'observed_revision', 'result_revision', 'files_inspected', 'commits',
                   'decisions', 'validation', 'findings', 'criteria_results', 'risks', 'out_of_scope', 'questions',
-                  'next_action', 'review', 'usage', 'self_review'):
+                  'next_action', 'review', 'usage', 'self_review', 'refutation'):
         if field in brief:
             result[field] = brief[field]
     result['workspace_dirty'] = live['dirty']
@@ -287,7 +323,9 @@ def prepare_brief_result(run, task, brief):
             raise DevFlowError('Brief usage accepts only explicitly reported model, tokens, duration_ms, tool_uses, source, activity and phase')
         metrics.entry({**brief['usage'], 'role': task['role'], 'task_id': task['task_id'],
                        'worker_id': brief['worker_id']})
-    if task['role'] == 'reviewer':
+    if task.get('refute'):
+        check_refutation(run, task, result)
+    elif task['role'] == 'reviewer':
         review = brief.get('review')
         if (not isinstance(review, dict)
                 or review.get('verdict') not in ('passed', 'changes_required', 'incomplete')
@@ -332,8 +370,12 @@ def run_command(args, ctx):
         raise DevFlowError('--context-from only applies to task')
     if getattr(args, 'review_from', None) and args.action != 'task':
         raise DevFlowError('--review-from only applies to task')
-    if getattr(args, 'brief', False) and args.action != 'record':
-        raise DevFlowError('--brief only applies to record')
+    if getattr(args, 'brief', False) and args.action not in ('record', 'show'):
+        raise DevFlowError('--brief only applies to record and show')
+    if getattr(args, 'refute_from', None) and (args.action != 'task' or args.role != 'reviewer'):
+        raise DevFlowError('--refute-from only applies to task --role reviewer')
+    if getattr(args, 'user_approved', None) is not None and (args.action != 'task' or args.role != 'fixer'):
+        raise DevFlowError('--user-approved only applies to task --role fixer')
     if (getattr(args, 'can_delegate', False) or getattr(args, 'parent_task', None) or getattr(args, 'native_nesting_evidence', None) is not None
             or getattr(args, 'native_max_workers', None) is not None) and args.action != 'task':
         raise DevFlowError('Nesting flags only apply to task')
@@ -384,7 +426,7 @@ def run_command(args, ctx):
         return run | {'identity': identity, 'context': start_context(data, run['workspace'])}
     require(args.run)
     if args.action == 'show':
-        return state.status(data, run_id=args.run)
+        return compact_json(state.brief_status(data, args.run)) if args.brief else state.status(data, run_id=args.run)
     if args.action == 'prepare-result':
         require(args.input, args.task_id)
         run = state.load(data, args.run)
@@ -404,7 +446,9 @@ def run_command(args, ctx):
         blockers = nesting.result_blockers(run, task, result)
         if blockers:
             raise DevFlowError('; '.join(blockers))
-        if task['role'] == 'reviewer':
+        if task.get('refute'):
+            check_refutation(run, task, result)
+        elif task['role'] == 'reviewer':
             review = result.get('review')
             if (not isinstance(review, dict)
                     or review.get('verdict') not in ('passed', 'changes_required', 'incomplete')
@@ -481,6 +525,13 @@ def run_command(args, ctx):
             confirmed = getattr(args, 'blockers_confirmed', None)
             if confirmed is not None:
                 state.one_line(confirmed, '--blockers-confirmed', None)
+            approved = getattr(args, 'user_approved', None)
+            if approved is not None:
+                state.one_line(approved, '--user-approved', None)
+            elif args.role == 'fixer':
+                gate = state.fixer_gate(run)
+                if gate:
+                    raise DevFlowError(gate)
             rounds = state.changes_required_reviews(run)
             if args.role == 'fixer' and rounds >= 2 and confirmed is None:
                 raise DevFlowError(f'{rounds} reviews already required changes: before another fixer, verify that the '
@@ -504,6 +555,16 @@ def run_command(args, ctx):
                 raise DevFlowError('Replacement cannot change its inherited correction key')
             if args.review_from and args.role != 'reviewer':
                 raise DevFlowError('--review-from only applies to reviewer assignments')
+            refute_from = getattr(args, 'refute_from', None)
+            if refute_from:
+                if args.review_from:
+                    raise DevFlowError('--refute-from and --review-from are separate review modes')
+                refuted = known.get(refute_from)
+                if (not refuted or refuted.get('role') != 'reviewer' or refuted.get('result') is None
+                        or refuted.get('refute')):
+                    raise DevFlowError('--refute-from must name a recorded (non-refutation) reviewer assignment')
+                if not state.open_task_blockers(run, refuted):
+                    raise DevFlowError('--refute-from needs a review with at least one unresolved blocker finding')
             replacing = known.get(args.replaces) if args.replaces else None
             parent_task_id = getattr(args, 'parent_task', None)
             if replacing and replacing.get('parent_task_id'):
@@ -534,6 +595,10 @@ def run_command(args, ctx):
             nesting.apply_assignment(run, task, grant)
             if confirmed is not None:
                 task['blockers_confirmed'] = confirmed
+            if approved is not None:
+                task['user_approved'] = approved
+            if refute_from:
+                task['refute'] = state.refute_packet(run, known[refute_from])
             scope_rules(data, task)
             if replacing:
                 task['replaces'] = replacing['task_id']
@@ -569,7 +634,8 @@ def run_command(args, ctx):
                     prior = (source or {}).get('result') or {}
                     coverage = (prior.get('review') or {}).get('coverage')
                     prior_revision = ((source or {}).get('review_diff') or {}).get('revision')
-                    if not source or source.get('role') != 'reviewer' or not isinstance(prior, dict):
+                    if (not source or source.get('role') != 'reviewer' or source.get('refute')
+                            or not isinstance(prior, dict)):
                         raise DevFlowError('--review-from must name a recorded reviewer assignment')
                     if (prior.get('status') != 'done' or (prior.get('review') or {}).get('verdict') not in ('passed', 'changes_required')
                             or not isinstance(coverage, str) or not coverage.strip()):
@@ -591,9 +657,13 @@ def run_command(args, ctx):
                     delta_path = state.run_dir(data, args.run) / 'review-inputs' / (task['task_id'] + '.delta.diff')
                     atomic_write(delta_path, delta_content)
                     task['review_delta'] = {'path': str(delta_path.resolve()), 'sha256': digest(delta_content),
-                                            'base_revision': prior_revision, 'revision': run['current_revision']}
+                                            'base_revision': prior_revision, 'revision': run['current_revision'],
+                                            'files': sorted(gitops.changed_paths(run['workspace'], prior_revision))}
                     pending = [f for f in run.get('findings', []) if not f.get('resolved')]
                     task['review_from'] = args.review_from
+                    # Validation scope: check the frozen blockers and regressions in the corrected files only.
+                    task['scope'] = 'validation'
+                    task['frozen_findings'] = state.frozen_findings(run, source)
                     task['relevant_context'].append({'prior_independent_review': args.review_from,
                                                      'coverage': coverage, 'findings_pending': pending})
             if args.replaces:
@@ -603,7 +673,8 @@ def run_command(args, ctx):
             run['tasks'].append(task)
             state.mark_features(run, getattr(args, 'can_delegate', False) and 'nesting', bool(sources) and 'context_from',
                                 args.budget_minutes is not None and 'budget_minutes',
-                                confirmed is not None and 'blockers_confirmed')
+                                confirmed is not None and 'blockers_confirmed', bool(refute_from) and 'refutation',
+                                approved is not None and 'user_approved')
             state.save(data, run, 'task assigned')
             return task
         elif args.action == 'record':
@@ -651,6 +722,9 @@ def run_command(args, ctx):
                 artifact = task.get('review_diff')
                 if not artifact or digest(Path(artifact['path']).read_bytes()) != artifact['sha256']:
                     raise DevFlowError('Reviewer diff artifact missing/modified; reassign review')
+            if task.get('refute'):
+                check_refutation(run, task, result)
+            elif task['role'] == 'reviewer':
                 if not isinstance(review, dict) or review.get('verdict') not in ('passed', 'changes_required', 'incomplete'):
                     raise DevFlowError('Reviewer result must include review.verdict (passed, changes_required or incomplete)')
                 if not isinstance(review.get('coverage'), str) or not review['coverage'].strip():
@@ -660,6 +734,8 @@ def run_command(args, ctx):
                     raise DevFlowError('Reviewer delta artifact missing/modified; reassign review')
                 check_lenses(run, task, review)
             state.append_findings({'findings': copy.deepcopy(run['findings'])}, result['findings'])
+            state.apply_refutation({'findings': copy.deepcopy(run['findings']),
+                                    'current_revision': candidate}, task, result)
             # Warnings never block: they point at evidence the Coordinator may still want to add.
             warnings = record_warnings(run, task, result, usage)
             if args.dry_run:
@@ -667,7 +743,7 @@ def run_command(args, ctx):
                 return {'valid': True, 'dry_run': True, 'task_id': task['task_id'], 'role': task['role'],
                         'status': result['status'], 'candidate_revision': candidate,
                         'workspace_dirty': live['dirty'], 'files_changed': sorted(actual),
-                        'review_verdict': review.get('verdict') if task['role'] == 'reviewer' else None,
+                        'review_verdict': (review or {}).get('verdict') if task['role'] == 'reviewer' else None,
                         'usage_recorded': usage is not None, 'state_changed': False, 'warnings': warnings}
             task['status'], task['result'] = result['status'], result
             task['result_recorded_at'] = now()
@@ -680,10 +756,13 @@ def run_command(args, ctx):
                 run.setdefault('metrics', []).append(usage)
             run['validations'].extend(result['validation'])
             run['criteria_results'].extend(result['criteria_results'])
-            state.append_findings(run, result['findings'])
+            finding_ids = state.append_findings(run, result['findings'])
+            if finding_ids:
+                task['finding_ids'] = finding_ids
+            state.apply_refutation(run, task, result)
             if result['files_changed'] and result['worker_id'] not in run['authors']:
                 run['authors'].append(result['worker_id'])
-            if task['role'] == 'reviewer':
+            if task['role'] == 'reviewer' and not task.get('refute'):
                 run['review'] = {'verdict': review['verdict'], 'revision': candidate, 'worker_id': result['worker_id']}
             state.mark_features(run, 'self_review' in result and 'self_review')
             atomic_write(state.run_dir(data, args.run) / 'results' / (safe_id(result['task_id']) + '.json'), json_bytes(result))
@@ -781,6 +860,8 @@ def dispatch(args, ctx):
                                'plan-only must stop before any state/Git write',
                 'implementation_started': False}
     if args.command == 'status':
+        if args.brief:
+            return compact_json(state.brief_status(data, args.run, ctx.repo))
         return state.status(data, run_id=args.run, repository=ctx.repo)
     if args.command == 'stats':
         return (metrics.features if args.features else metrics.stats)(data, ctx.repo, args.all, args.since)

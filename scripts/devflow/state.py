@@ -30,6 +30,16 @@ NOTE_LIMIT = 200
 STALE_HOURS = 24
 SELF_REVIEW_MISSING = 'self_review missing for planned lenses'
 USAGE_MISSING = 'usage not recorded for this task'
+REFUTATION_OUTCOMES = ('corroborated', 'refuted', 'inconclusive')
+REFUTATION_EVIDENCE_LIMIT = 300
+REFUTE_NEEDED = 'Run a refutation (_run task --role reviewer --refute-from ID) before assigning a fixer'
+ONLY_INCONCLUSIVE = 'Only inconclusive blockers remain: ask the user to decide'
+ONE_CORRECTION = ('One correction per candidate: the scoped re-review still requires changes; ask the user before '
+                  'another correction (pass --user-approved TEXT)')
+SCOPED_BLOCKER = ('Scoped re-review: new blocker outside the corrected files; report it as a non-blocking follow-up '
+                  '(suggestion/out_of_scope)')
+BRIEF_LIST_LIMIT = 8
+BRIEF_TEXT_LIMIT = 300
 
 
 def run_dir(data, run_id):
@@ -183,7 +193,109 @@ def missing_lenses(plan, coverage):
 
 def changes_required_reviews(run):
     return sum(1 for t in run.get('tasks', []) if t.get('role') == 'reviewer' and t.get('result')
-               and (t['result'].get('review') or {}).get('verdict') == 'changes_required')
+               and not t.get('refute') and (t['result'].get('review') or {}).get('verdict') == 'changes_required')
+
+
+def task_findings(run, task):
+    """Findings a recorded task reported (tasks recorded before 1.0.21 have no finding_ids)."""
+    ids = set(task.get('finding_ids') or [])
+    return [f for f in run.get('findings', []) if f.get('id') in ids]
+
+
+def open_task_blockers(run, task):
+    return [f for f in task_findings(run, task) if f.get('kind') == 'blocker' and not f.get('resolved')]
+
+
+def latest_review(run):
+    """Most recent recorded reviewer result that is not a refutation."""
+    return next((t for t in reversed(run.get('tasks', [])) if t.get('role') == 'reviewer'
+                 and t.get('result') is not None and not t.get('refute')), None)
+
+
+def refute_packet(run, source):
+    return {'from_task': source['task_id'],
+            'findings': [{k: f.get(k) for k in ('id', 'location', 'trigger', 'impact', 'evidence')}
+                         for f in open_task_blockers(run, source)]}
+
+
+def frozen_findings(run, source):
+    """Corroborated/inconclusive blockers of the referenced review: what a scoped re-review validates."""
+    return [{**{k: f.get(k) for k in ('id', 'location', 'trigger', 'impact', 'evidence')},
+             'refutation': f['refutation']['outcome'], 'resolved': bool(f.get('resolved'))}
+            for f in task_findings(run, source) if f.get('kind') == 'blocker'
+            and (f.get('refutation') or {}).get('outcome') in ('corroborated', 'inconclusive')]
+
+
+def fixer_gate(run):
+    """Reason a fixer may not be assigned without an explicit user decision; None when it may."""
+    review = latest_review(run)
+    if review is None:
+        return None
+    tasks = run.get('tasks', [])
+    if review.get('review_from') and (review['result'].get('review') or {}).get('verdict') == 'changes_required':
+        source = next((t for t in tasks if t.get('task_id') == review['review_from']), None)
+        start = tasks.index(source) + 1 if source is not None else 0
+        if any(t.get('role') == 'fixer' and t.get('status') == 'done' for t in tasks[start:tasks.index(review)]):
+            return ONE_CORRECTION
+    blockers = open_task_blockers(run, review)
+    if not blockers:
+        return None
+    outcomes = [(f.get('refutation') or {}).get('outcome') for f in blockers]
+    if 'corroborated' in outcomes:
+        return None
+    if all(outcome == 'inconclusive' for outcome in outcomes):
+        return ONLY_INCONCLUSIVE
+    return REFUTE_NEEDED
+
+
+def location_path(location):
+    """Repository path of a finding location such as 'app/x.py:12', 'app/x.py#L3' or 'app/x.py (func)'."""
+    text = location.strip().split()[0] if isinstance(location, str) and location.strip() else ''
+    text = re.sub(r'(?:#L\d.*|:\d.*)$', '', text.replace('\\', '/'))
+    while text.startswith('./'):
+        text = text[2:]
+    return text
+
+
+def validate_refutation(task, result):
+    refute = task.get('refute')
+    if 'refutation' in result and not refute:
+        raise DevFlowError('Only a refute-mode reviewer (--refute-from) may report refutation')
+    if not refute:
+        return
+    if result['findings']:
+        raise DevFlowError('A refutation must not report new findings; return one outcome per listed blocker')
+    items = result.get('refutation')
+    if items is None and result['status'] != 'done':
+        return
+    if not isinstance(items, list):
+        raise DevFlowError('Refutation result needs refutation: [{finding_id, outcome, evidence}]')
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {'finding_id', 'outcome', 'evidence'}:
+            raise DevFlowError('Refutation entries need exactly finding_id, outcome and evidence')
+        if item['outcome'] not in REFUTATION_OUTCOMES:
+            raise DevFlowError('Refutation outcome must be one of ' + ', '.join(REFUTATION_OUTCOMES))
+        one_line(item['evidence'], 'Refutation evidence', REFUTATION_EVIDENCE_LIMIT)
+    ids = [item['finding_id'] for item in items]
+    expected = [f['id'] for f in refute['findings']]
+    if len(set(ids)) != len(ids) or set(ids) != set(expected):
+        raise DevFlowError('Refutation must cover exactly the listed blockers once each: ' + ', '.join(expected))
+
+
+def apply_refutation(run, task, result):
+    """Store each outcome on its finding; a refuted blocker counts as resolved."""
+    by, at = result['worker_id'], now()
+    for item in result.get('refutation') or []:
+        finding = next((f for f in run['findings'] if f.get('id') == item['finding_id']), None)
+        if finding is None:
+            raise DevFlowError('Unknown finding identity in refutation')
+        finding['refutation'] = {'outcome': item['outcome'], 'evidence': item['evidence'], 'by': by, 'at': at}
+        if item['outcome'] == 'refuted' and not finding.get('resolved'):
+            resolution = {'finding_id': finding['id'], 'revision': run['current_revision'],
+                          'evidence': item['evidence'], 'refuted_by': by, 'task_id': task['task_id']}
+            finding.setdefault('resolution_history', []).append(copy.deepcopy(resolution))
+            finding['resolved'] = True
+            finding['resolution'] = resolution
 
 
 def hours_idle(run, at=None):
@@ -319,19 +431,72 @@ def require_owner(run, owner):
         raise DevFlowError('Coordinator identity mismatch; inspect workers and explicitly claim this run before mutation')
 
 
+def repository_runs(data, repository=None):
+    candidates, errors = [], []
+    folder = Path(data) / 'runs'
+    for state_file in sorted(folder.glob('*/state.json')) if folder.exists() else []:
+        try:
+            item = load(data, state_file.parent.name)
+            if repository is None or Path(item['repository']).resolve() == Path(repository).resolve():
+                candidates.append(item)
+        except DevFlowError as exc:
+            errors.append(str(exc))
+    return candidates, errors
+
+
+def _short(value, limit=BRIEF_TEXT_LIMIT):
+    return value[:limit - 3] + '...' if isinstance(value, str) and len(value) > limit else value
+
+
+def brief(run):
+    """Compact run summary for context recovery: no task packets or results."""
+    tasks = run.get('tasks', [])
+    open_tasks = [{'task_id': t.get('task_id'), 'role': t.get('role'), 'status': t.get('status')}
+                  for t in tasks if t.get('status') != 'done']
+    blockers = [{'id': f.get('id'), 'location': _short(f.get('location'), 120),
+                 'refutation': (f.get('refutation') or {}).get('outcome')}
+                for f in run.get('findings', []) if f.get('kind') == 'blocker' and not f.get('resolved')]
+    budget = budget_summary(run)
+    value = {'run_id': run['run_id'], 'mode': run.get('mode'), 'status': run.get('status'), 'phase': run.get('phase'),
+             'branch': run.get('branch'), 'current_revision': (run.get('current_revision') or '')[:12] or None,
+             'workspace': run.get('workspace'), 'next_action': _short(run.get('next_action')),
+             'review_lenses': (run.get('review_plan') or {}).get('lenses'),
+             'open_tasks': open_tasks[:BRIEF_LIST_LIMIT], 'open_blockers': blockers[:BRIEF_LIST_LIMIT],
+             'counts': {'reviews': sum(1 for t in tasks if t.get('role') == 'reviewer' and t.get('result') is not None
+                                       and not t.get('refute')),
+                        'refutations': sum(1 for t in tasks if t.get('refute') and t.get('result') is not None),
+                        'changes_required': changes_required_reviews(run),
+                        'fixers': sum(1 for t in tasks if t.get('role') == 'fixer')},
+             'budget': {k: budget[k] for k in ('workers_used', 'max_workers', 'tokens_known', 'max_tokens', 'exceeded')},
+             'request_ref': (run.get('request_ref') or {}).get('path')}
+    for key, items in (('open_tasks', open_tasks), ('open_blockers', blockers)):
+        if len(items) > BRIEF_LIST_LIMIT:
+            value[key + '_more'] = len(items) - BRIEF_LIST_LIMIT
+    return value
+
+
+def brief_status(data, run_id=None, repository=None):
+    """status --brief: one run's brief, or compact candidates when the run is not unique."""
+    if run_id:
+        return brief(load(data, run_id))
+    candidates, errors = repository_runs(data, repository)
+    if len(candidates) == 1:
+        return brief(candidates[0])
+    ordered = sorted(candidates, key=lambda r: r.get('updated_at') or '', reverse=True)
+    value = {'candidates': [{k: r.get(k) for k in ('run_id', 'mode', 'status', 'phase', 'updated_at')}
+                            for r in ordered[:BRIEF_LIST_LIMIT]],
+             'stale_runs': len(stale_runs(candidates)), 'errors': len(errors),
+             'message': 'No unique run; rerun status --brief --run ID'}
+    if len(ordered) > BRIEF_LIST_LIMIT:
+        value['candidates_more'] = len(ordered) - BRIEF_LIST_LIMIT
+    return value
+
+
 def status(data, run_id=None, repository=None, verify_git=True):
     if run_id:
         run = load(data, run_id)
     else:
-        candidates, errors = [], []
-        folder = Path(data) / 'runs'
-        for state_file in sorted(folder.glob('*/state.json')) if folder.exists() else []:
-            try:
-                item = load(data, state_file.parent.name)
-                if repository is None or Path(item['repository']).resolve() == Path(repository).resolve():
-                    candidates.append(item)
-            except DevFlowError as exc:
-                errors.append(str(exc))
+        candidates, errors = repository_runs(data, repository)
         stale = stale_runs(candidates)
         if len(candidates) != 1:
             return {'candidates': [{'run_id': r['run_id'], 'mode': r['mode'], 'status': r['status'],
@@ -530,7 +695,10 @@ def empty_result(task, worker_id):
                    'worker_id': worker_id, 'role': task['role'], 'status': 'partial', 'summary': '',
                    'observed_revision': task['candidate_revision'], 'result_revision': None,
                    'workspace_dirty': False, 'next_action': ''})
-    if task['role'] == 'reviewer':
+    if task.get('refute'):
+        result['refutation'] = [{'finding_id': f['id'], 'outcome': '', 'evidence': ''}
+                                for f in task['refute']['findings']]
+    elif task['role'] == 'reviewer':
         result['review'] = {'verdict': '', 'coverage': ''}
     return result
 
@@ -578,6 +746,12 @@ def validate_result(task, result):
             raise DevFlowError('Worker reported an unknown acceptance criterion')
     for finding in result['findings']:
         validate_finding(finding)
+    validate_refutation(task, result)
+    delta_files = (task.get('review_delta') or {}).get('files')
+    if task.get('review_from') and delta_files is not None:
+        for finding in result['findings']:
+            if finding['kind'] == 'blocker' and location_path(finding.get('location')) not in delta_files:
+                raise DevFlowError(SCOPED_BLOCKER)
     if 'code_map' in result:
         validate_code_map(task['workspace'], result['code_map'])
     if 'self_review' in result:
@@ -628,6 +802,7 @@ def validate_finding(finding):
 
 def append_findings(run, findings):
     existing = {f.get('id') for f in run['findings'] if f.get('id')}
+    ids = []
     for finding in findings:
         validate_finding(finding)
         value = copy.deepcopy(finding)
@@ -636,6 +811,8 @@ def append_findings(run, findings):
             raise DevFlowError('Finding identity already exists')
         existing.add(value['id'])
         run['findings'].append(value)
+        ids.append(value['id'])
+    return ids
 
 
 def resolve_finding(run, value):
@@ -723,6 +900,8 @@ def completion_blockers(run):
     for finding in run['findings']:
         if finding.get('kind') != 'blocker':
             continue
+        if finding.get('resolved') and (finding.get('refutation') or {}).get('outcome') == 'refuted':
+            continue  # Refuted by an independent reviewer: not a defect, whatever the later revision.
         if not finding.get('resolved', False) or finding.get('resolution', {}).get('revision') != revision:
             blockers.append('Unresolved review blockers remain' + (f": {finding['id']}" if finding.get('id') else ''))
         else:

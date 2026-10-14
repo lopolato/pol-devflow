@@ -1,6 +1,6 @@
-# Pol DevFlow 1.0.20
+# Pol DevFlow 1.0.21
 
-La 1.0.20 busca acertar a la primera: el Coordinator fija un `review_plan` con las lentes de riesgo antes del Implementer, implementer/fixer devuelven `self_review`, el Reviewer cubre esas lentes y una segunda ronda de fixer exige blockers verificados (`--blockers-confirmed`). El CLI entrega solo el contexto útil (`context` de start con perfil y codegraph, `rules` en cada encargo, `warnings` al registrar, `retro_draft` al cerrar) y `status` señala `stale_runs` que se pueden abandonar con confirmación.
+La 1.0.21 recorta el ciclo revisión → corrección → nueva revisión: el Reviewer solo informa defectos reales con evidencia (un falso positivo cuesta un ciclo completo), otro Reviewer intenta refutar cada blocker antes de corregir (`_run task --role reviewer --refute-from REVIEW_TASK_ID`: `corroborated`, `refuted` o `inconclusive`), el fixer solo corrige los corroborados, la re-revisión con `--review-from` comprueba solo esos blockers en los archivos corregidos y una segunda corrección exige tu decisión (`--user-approved`). Tras una compactación del contexto, `status --brief` recupera el estado en unas 40 líneas. Ideas adaptadas de gentle-ai: ver [análisis](docs/analisis-gentle-ai.md).
 
 Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optimize` con workers, Git seguro, pruebas reales y revisión independiente. El Coordinator es la sesión del chat; el CLI Python solo aporta operaciones deterministas (estado, Git, evidencia), no es un agente.
 
@@ -33,7 +33,7 @@ Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optim
 
 `error`, `feature`, `optimize`, `help`, `status`, `stats`, `retro`, `rules`, `config`, `cleanup`. Detalle en [comandos](core/commands.md). `tests/test_docs_consistency.py` falla si la documentación cita un comando, acción o flag que el CLI no tiene.
 
-- `status [--run ID]`: estado, tareas vencidas (`overdue_tasks`) y presupuesto del run; sin `--run`, `stale_runs` (activos sin cambios en 24 h), que el Coordinator solo abandona (`_run abandon`) tras preguntarte.
+- `status [--brief] [--run ID]`: estado, tareas vencidas (`overdue_tasks`) y presupuesto del run; sin `--run`, `stale_runs` (activos sin cambios en 24 h), que el Coordinator solo abandona (`_run abandon`) tras preguntarte. `--brief` da un resumen compacto para recuperar contexto.
 - `stats [--all] [--since DAYS] [--features]`: tokens, tiempo y modelos registrados por rol (lo no reportado figura como desconocido, nunca estimado). `--features` cuenta qué funciones se usan y lista `never_used`, candidatas a recortar.
 - `retro [--since DAYS] [--category C]`: resumen de las autoevaluaciones de proceso que el Coordinator guarda al cerrar a partir del `retro_draft` de `check-close`.
 - `rules [--path P ...]`: reglas del proyecto (must_not, requirement, convention) y las que afectan a unas rutas. Tras corregir un bug se propone una `must_not` ligada a su test de regresión (inferida hasta que la confirmes); llegan solas en cada encargo (`rules`) y las comprueba el Reviewer. Se guardan fuera del repositorio salvo `--repo-file` (`.devflow/rules.json`). Reglas y retro son optativas y nunca bloquean.
@@ -89,6 +89,7 @@ MIT. Ver [LICENSE](LICENSE).
 
 ## Historial
 
+- 1.0.21: filtro de precisión del Reviewer, refutación de blockers antes del fixer (`--refute-from`), re-revisión acotada (`frozen_findings`), una corrección por candidato salvo decisión del usuario (`--user-approved`), `status --brief`, presupuestos de contexto y formateadores antes de revisar ([análisis gentle-ai](docs/analisis-gentle-ai.md)).
 - 1.0.20: `review_plan` con lentes, `self_review`, cobertura por lente, `--blockers-confirmed` en la segunda ronda de fixer, `context` en start, `rules` en los encargos, `warnings` en record, `retro_draft` en check-close, `stale_runs` y `_run abandon`.
 - 1.0.19: nivel por riesgo y comprensión (sin límite de archivos en lite), petición literal por referencia (`request_ref`), instalador que retira obsoletos, `release.py --wait-ci` y test de coherencia docs/CLI.
 - 1.0.18: entrega breve con guards, review delta ligada a cobertura/ancestro, pautas de pruebas seguras y métricas por actividad.

@@ -9,9 +9,9 @@ No cambiar contratos compartidos sin decisión del Coordinator, integrar ramas h
 Devolver un resultado estructurado con estos campos:
 schema_version: 1; run_id; task_id; worker_id; role; status (done/partial/blocked/cancelled);
 summary; observed_revision; result_revision; workspace_dirty; criteria_results; findings;
-files_inspected; code_map (opcional); files_changed; self_review (implementer/fixer); commits; decisions; validation; risks; out_of_scope;
+files_inspected; code_map (opcional); files_changed; self_review (implementer/fixer); refutation (solo refutación); commits; decisions; validation; risks; out_of_scope;
 questions; next_action. Las listas vacías y next_action pueden omitirse; files_changed nunca si hubo cambios.
-Si relevant_context trae code_map, leer primero esos rangos (con codegraph si hay codegraph.project_path) y ampliar la lectura solo si no basta, indicando por qué en el resultado. Explorer/Debugger entregan code_map con lo que necesita el siguiente worker (máx. 50 entradas).
+Si relevant_context trae code_map, leer primero esos rangos (con codegraph si hay codegraph.project_path) y ampliar la lectura solo si no basta, indicando por qué en el resultado. Explorer/Debugger entregan code_map con lo que necesita el siguiente worker (máx. 50 entradas) y un resumen de ≤ ~2k tokens. Acotar las salidas de comandos (recuentos, `--stat`, `tail`); hacia ~150k tokens de contexto, devolver partial con lo obtenido y la siguiente unidad acotada.
 Usar los comandos verificados del encargo sin redescubrirlos e informar los ejecutados con su resultado. En ciclos de corrección ejecutar solo tests afectados. Las `rules` del encargo son límites: si el cambio exige incumplir una `must_not` o `requirement`, detenerse e informar. Con `review_plan`, implementer y fixer comprueban el cambio contra cada lente y esas reglas antes de entregar y devuelven `self_review` [{lens, status ok|risk|not_applicable, note de una línea}].
 
 Usar el worker_id real o la identidad estable asignada por Coordinator y vinculada a esta ejecución; no inventar otro id para parecer independiente. Coordinator ejecutando un rol usa su propia identidad.

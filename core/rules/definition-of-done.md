@@ -26,7 +26,7 @@ Clasificar hallazgos:
 - **suggestion:** mejora opcional que no impide cumplir el objetivo;
 - **out_of_scope:** problema ajeno que se informa sin arreglar automáticamente.
 
-Cada blocker incluye ubicación, condición de aparición, impacto y evidencia. El Coordinator verifica su pertinencia antes de encargar la corrección. Las sugerencias no activan al Fixer.
+Cada blocker incluye ubicación, condición de aparición, impacto y evidencia. Antes de encargar la corrección, un Reviewer distinto lo refuta ([procedimiento](../coordinator.md)); solo los corroborados (o los que decida el usuario) van al Fixer. Las sugerencias no activan al Fixer.
 
 Una aprobación corresponde únicamente a la versión revisada. Después de corregir un blocker, verificar la corrección, las regresiones relacionadas y el diff final.
 
