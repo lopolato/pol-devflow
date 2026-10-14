@@ -222,7 +222,9 @@ class AutoContextTests(unittest.TestCase):
                                    review={'verdict': 'changes_required', 'coverage': 'Read the diff'})
             self.run_cli('record', run, '--input', self.write(result))
         fixer = self.run_cli('task', run, '--role', 'fixer', '--objective', 'fix', '--write-scope', 'app.py',
-                             '--correction-key', 'k1', '--budget-minutes', '1', '--blockers-confirmed', 'Both real')
+                             '--correction-key', 'k1', '--budget-minutes', '1', '--blockers-confirmed', 'Both real',
+                             # A long digit run in the id once made _retro add reject the draft as a phone number.
+                             '--task-id', 'task-1234567890')
         past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=10)).isoformat()
         self.edit_state(run, lambda value: value['tasks'][-1].update(assigned_at=past))
         before = self.state_path(run).read_bytes()
@@ -230,7 +232,7 @@ class AutoContextTests(unittest.TestCase):
         self.assertEqual(draft, {'went_well': [], 'suggestions': [], 'problems': [
             {'category': 'process', 'text': '2 review rounds with changes_required'},
             {'category': 'process', 'text': '1 fixer tasks'},
-            {'category': 'process', 'text': f"overdue tasks: {fixer['task_id']}"},
+            {'category': 'process', 'text': 'overdue tasks: 1 (fixer)'},
             {'category': 'process', 'text': 'budget warnings: max_tokens exceeded'}]})
         self.assertEqual(self.state_path(run).read_bytes(), before)
         self.assertNotIn('retro', self.run_cli('show', run)['run'])

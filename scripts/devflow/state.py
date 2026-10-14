@@ -331,7 +331,10 @@ def retro_draft(run):
     overdue = overdue_tasks(run)
     if overdue:
         problems.append({'category': 'process',
-                         'text': ('overdue tasks: ' + ', '.join(t['task_id'] for t in overdue))[:NOTE_LIMIT]})
+                         # Roles, not task ids: random ids can contain long digit runs that the privacy
+                         # guard of _retro add rejects as phone numbers.
+                         'text': (f'overdue tasks: {len(overdue)} ('
+                                  + ', '.join(sorted({t["role"] for t in overdue})) + ')')[:NOTE_LIMIT]})
     exceeded = budget_summary(run)['exceeded']
     if exceeded:
         problems.append({'category': 'process', 'text': 'budget warnings: ' + ', '.join(exceeded) + ' exceeded'})
