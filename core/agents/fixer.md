@@ -8,7 +8,7 @@
 
 **No hace:** silenciar errores, desactivar tests, rebajar criterios, arreglar sugerencias opcionales por defecto o reiniciar el presupuesto.
 
-**Entrega al Coordinator:** relación hallazgo→corrección→evidencia, commits y problemas no resueltos.
+**Entrega al Coordinator:** relación hallazgo→corrección→evidencia, commits y problemas no resueltos. Antes de entregar, comprobar el arreglo contra cada lente de `review_plan` y las `rules` del encargo y devolver `self_review`.
 
 **Aceptación:** correcciones contrastadas; no puede dar por cerrada por sí mismo una review independiente.
 

@@ -293,8 +293,13 @@ def rules_for(data, repository, paths, status=None):
     result, value = _read(data, workspace)
     matched = sorted((r for r in value['rules'] if (status is None or r.get('status') == status)
                       and any(paths_match(a, b) for a in r['paths'] for b in wanted)), key=_order)
+    return result | {'paths': wanted, 'rules': _annotate(workspace, matched[:FOR_LIMIT]), 'matched': len(matched),
+                     'truncated': len(matched) > FOR_LIMIT}
+
+
+def _annotate(workspace, rules):
     selected = []
-    for rule in matched[:FOR_LIMIT]:
+    for rule in rules:
         changed = stale_paths(workspace, rule)
         item = rule | {'stale': changed is None or bool(changed)}
         if changed is None:
@@ -303,8 +308,27 @@ def rules_for(data, repository, paths, status=None):
             item['stale_reason'] = 'paths changed since revision'
             item['changed_paths'] = changed
         selected.append(item)
-    return result | {'paths': wanted, 'rules': selected, 'matched': len(matched),
-                     'truncated': len(matched) > FOR_LIMIT}
+    return selected
+
+
+def count(data, workspace):
+    """Number of registered rules (any status) for the start context."""
+    return len(_read(data, Path(workspace))[1]['rules'])
+
+
+def for_scope(data, workspace, paths):
+    """Rules for a task's write/read scope, same items as _rules for; a whole-repository scope matches all."""
+    workspace = Path(workspace)
+    whole, wanted = False, []
+    for value in paths:
+        if isinstance(value, str) and PurePosixPath(value.strip().replace('\\', '/') or '.').as_posix() == '.':
+            whole = True
+        else:
+            wanted.append(normalize_path(workspace, value, 'scope path'))
+    _, stored = _read(data, workspace)
+    matched = sorted((r for r in stored['rules']
+                      if whole or any(paths_match(a, b) for a in r['paths'] for b in wanted)), key=_order)
+    return {'rules': _annotate(workspace, matched[:FOR_LIMIT]), 'truncated': len(matched) > FOR_LIMIT}
 
 
 # Test import (read-only) --------------------------------------------------------------------------------------

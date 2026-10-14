@@ -1,6 +1,6 @@
-# Pol DevFlow 1.0.19
+# Pol DevFlow 1.0.20
 
-La 1.0.19 elige el nivel por riesgo y comprensión, no por número de archivos; guarda la petición literal del usuario (`--request-file`, `request_ref`) para que los workers la lean sin paráfrasis; el instalador retira archivos propios obsoletos y `release.py --wait-ci` espera a que CI termine.
+La 1.0.20 busca acertar a la primera: el Coordinator fija un `review_plan` con las lentes de riesgo antes del Implementer, implementer/fixer devuelven `self_review`, el Reviewer cubre esas lentes y una segunda ronda de fixer exige blockers verificados (`--blockers-confirmed`). El CLI entrega solo el contexto útil (`context` de start con perfil y codegraph, `rules` en cada encargo, `warnings` al registrar, `retro_draft` al cerrar) y `status` señala `stale_runs` que se pueden abandonar con confirmación.
 
 Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optimize` con workers, Git seguro, pruebas reales y revisión independiente. El Coordinator es la sesión del chat; el CLI Python solo aporta operaciones deterministas (estado, Git, evidencia), no es un agente.
 
@@ -33,16 +33,16 @@ Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optim
 
 `error`, `feature`, `optimize`, `help`, `status`, `stats`, `retro`, `rules`, `config`, `cleanup`. Detalle en [comandos](core/commands.md). `tests/test_docs_consistency.py` falla si la documentación cita un comando, acción o flag que el CLI no tiene.
 
-- `status [--run ID]`: estado, tareas vencidas (`overdue_tasks`) y presupuesto del run.
+- `status [--run ID]`: estado, tareas vencidas (`overdue_tasks`) y presupuesto del run; sin `--run`, `stale_runs` (activos sin cambios en 24 h), que el Coordinator solo abandona (`_run abandon`) tras preguntarte.
 - `stats [--all] [--since DAYS] [--features]`: tokens, tiempo y modelos registrados por rol (lo no reportado figura como desconocido, nunca estimado). `--features` cuenta qué funciones se usan y lista `never_used`, candidatas a recortar.
-- `retro [--since DAYS] [--category C]`: resumen de las autoevaluaciones de proceso que el Coordinator guarda al cerrar.
-- `rules [--path P ...]`: reglas del proyecto (must_not, requirement, convention) y las que afectan a unas rutas. Tras corregir un bug se propone una `must_not` ligada a su test de regresión (inferida hasta que la confirmes); se consultan antes de asignar writers y las comprueba el Reviewer. Se guardan fuera del repositorio salvo `--repo-file` (`.devflow/rules.json`). Reglas y retro son optativas y nunca bloquean.
+- `retro [--since DAYS] [--category C]`: resumen de las autoevaluaciones de proceso que el Coordinator guarda al cerrar a partir del `retro_draft` de `check-close`.
+- `rules [--path P ...]`: reglas del proyecto (must_not, requirement, convention) y las que afectan a unas rutas. Tras corregir un bug se propone una `must_not` ligada a su test de regresión (inferida hasta que la confirmes); llegan solas en cada encargo (`rules`) y las comprueba el Reviewer. Se guardan fuera del repositorio salvo `--repo-file` (`.devflow/rules.json`). Reglas y retro son optativas y nunca bloquean.
 - Presupuesto en full: `--max-workers N` / `--max-tokens N` al iniciar. Superar workers se rechaza hasta que apruebes subirlo; superar tokens solo se avisa.
 - `cleanup [--apply] [--remote R] [--discard RAMA] [--purge-history]`: ver [Limpieza](#limpieza).
 
 ## Perfil, codegraph y Context7
 
-El perfil (`_profile`) guarda fuera del repositorio los comandos verificados (test, test_affected, lint, build…) para no redescubrirlos y marca `stale` si cambian dependencias o tooling; `.devflow/project.json` solo si lo pides. Si el proyecto tiene `.codegraph/codegraph.db`, los roles lo consultan antes de abrir archivos (DevFlow nunca crea el índice). [Context7](core/rules/technical-context.md) se usa solo ante dudas de API/versión. Durante DevFlow no se activan skills de proceso de otros plugins (p. ej. superpowers).
+El perfil (`_profile`) guarda fuera del repositorio los comandos verificados (test, test_affected, lint, build…) para no redescubrirlos y marca `stale` si cambian dependencias o tooling; `_run start` y `_lite start` lo devuelven en `context`; `.devflow/project.json` solo si lo pides. Si el proyecto tiene `.codegraph/codegraph.db`, los roles lo consultan antes de abrir archivos (DevFlow nunca crea el índice). [Context7](core/rules/technical-context.md) se usa solo ante dudas de API/versión. Durante DevFlow no se activan skills de proceso de otros plugins (p. ej. superpowers).
 
 ## Orca
 
@@ -89,6 +89,7 @@ MIT. Ver [LICENSE](LICENSE).
 
 ## Historial
 
+- 1.0.20: `review_plan` con lentes, `self_review`, cobertura por lente, `--blockers-confirmed` en la segunda ronda de fixer, `context` en start, `rules` en los encargos, `warnings` en record, `retro_draft` en check-close, `stale_runs` y `_run abandon`.
 - 1.0.19: nivel por riesgo y comprensión (sin límite de archivos en lite), petición literal por referencia (`request_ref`), instalador que retira obsoletos, `release.py --wait-ci` y test de coherencia docs/CLI.
 - 1.0.18: entrega breve con guards, review delta ligada a cobertura/ancestro, pautas de pruebas seguras y métricas por actividad.
 - 1.0.17: presupuesto por run, registro de funciones usadas (`stats --features`), retro de proceso, reglas del proyecto y `scripts/release.py`.

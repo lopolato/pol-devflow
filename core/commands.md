@@ -10,7 +10,7 @@ Usar `python <skill>/scripts/devflow.py <argumentos>`. `--data-dir <ruta>` fija 
 
 `status [--run ID]` consulta estado y contrasta Git. Usar el run del chat si se conoce; en otro caso buscar por proyecto. Una ejecución se selecciona, varias se enumeran y ninguna indica ausencia de estado.
 
-Resumir modo, fase, estado, workspace, rama, revisión, tareas (y `overdue_tasks`), workers, validaciones, review, fecha registrada, bloqueos y siguiente acción. Actividad registrada no prueba actividad nativa actual. HEAD cambiado o workspace dirty impiden afirmar vigencia de evidencia anterior. En Orca resumir también IDs de Run/Task/Dispatch, settlement y accounting registrados; comprobar actividad real con el runtime solo cuando corresponda, sin fingirla a partir del JSON. `timing.elapsed_seconds` y `timing.tasks` muestran tiempo de pared desde asignación hasta registro (o hasta ahora si sigue activa); no son tiempo de cómputo y tareas solapadas no se suman. Fechas históricas ausentes figuran como null. Status no reanuda ni reescribe estado; corrupción se informa como error.
+Resumir modo, fase, estado, workspace, rama, revisión, tareas (y `overdue_tasks`), workers, validaciones, review, fecha registrada, bloqueos y siguiente acción. Actividad registrada no prueba actividad nativa actual. HEAD cambiado o workspace dirty impiden afirmar vigencia de evidencia anterior. En Orca resumir también IDs de Run/Task/Dispatch, settlement y accounting registrados; comprobar actividad real con el runtime solo cuando corresponda, sin fingirla a partir del JSON. `timing.elapsed_seconds` y `timing.tasks` muestran tiempo de pared desde asignación hasta registro (o hasta ahora si sigue activa); no son tiempo de cómputo y tareas solapadas no se suman. Fechas históricas ausentes figuran como null. Status no reanuda ni reescribe estado; corrupción se informa como error. Sin `--run` añade `stale_runs`: runs activos del repositorio sin cambios en más de 24 h (run_id, mode, updated_at, hours_idle). Proponer retirarlos y, solo con confirmación del usuario, ejecutar `_run abandon --run ID --reason TEXT --confirm-stale [--owner S]`: lo marca cancelado con el motivo, conserva rama y worktree y rechaza runs no obsoletos.
 
 ## stats
 
@@ -20,7 +20,7 @@ Resumir modo, fase, estado, workspace, rama, revisión, tareas (y `overdue_tasks
 
 ## retro y rules
 
-`retro [--since DAYS] [--category C]` (lectura) resume las autoevaluaciones de proceso: problemas por categoría (process, rules, tooling, model, environment), los 10 últimos problemas y sugerencias y el total. Se guardan sin rutas ni ids de run. Sin datos no crea nada.
+`retro [--since DAYS] [--category C]` (lectura) resume las autoevaluaciones de proceso: problemas por categoría (process, rules, tooling, model, environment), los 10 últimos problemas y sugerencias y el total. Se guardan sin rutas ni ids de run. Sin datos no crea nada. `_run check-close` devuelve `retro_draft` (problemas factuales del run por categoría) para completarlo y guardarlo con `_retro add`; nunca se guarda solo. `_run record` devuelve `warnings` (uso no registrado, `self_review` ausente) que no bloquean.
 
 `rules [--path P ...]` (lectura) lista las reglas del proyecto o, con `--path`, las que afectan a esas rutas (must_not primero, máx. 20, `stale` si sus rutas cambiaron desde su revisión). Alias de `_rules list|for`. Altas, confirmaciones y bajas las hace el Coordinator con `_rules` ([procedimiento](coordinator.md)).
 

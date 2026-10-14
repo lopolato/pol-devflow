@@ -25,7 +25,9 @@ HELP = {
                '--orca-idle-confirmed records verified runtime inactivity. History is retained by default; '
                '--purge-history explicitly removes eligible closed-run history after separate confirmation.',
     'optimize': 'optimize [--plan-only] <description>: baseline, change, comparable measurement and functional checks.',
-    'status': 'status [--run ID]: read recorded state and contrast Git revision; never resume a worker.',
+    'status': 'status [--run ID]: read recorded state and contrast Git revision; never resume a worker. '
+              'Without --run it lists stale_runs (active, idle over 24 h); after user confirmation '
+              '_run abandon --run ID --reason TEXT --confirm-stale cancels one, preserving branch and worktree.',
     'config': 'config [show|validate]\nconfig set --runtime codex|claude --role ROLE '
               '[--model MODEL] [--effort LEVEL] | --inherit\n'
               'Atomic shared config update; generated-file conflicts cause no config write. '
@@ -135,7 +137,8 @@ def parser():
     p = commands.add_parser('_run')
     p.add_argument('--executor', choices=('native', 'orca'), default='native')
     p.add_argument('action', choices=('start', 'show', 'refresh', 'checkpoint', 'task', 'record', 'update', 'resolve',
-                                      'attempt', 'close', 'claim', 'template', 'prepare-result', 'validate-result', 'check-close'))
+                                      'attempt', 'close', 'claim', 'template', 'prepare-result', 'validate-result', 'check-close',
+                                      'abandon'))
     p.add_argument('--run')
     p.add_argument('--owner')
     p.add_argument('--mode', choices=state.MODES)
@@ -173,6 +176,9 @@ def parser():
     p.add_argument('--author-email')
     p.add_argument('--max-workers', type=int)
     p.add_argument('--max-tokens', type=int)
+    p.add_argument('--blockers-confirmed')
+    p.add_argument('--reason')
+    p.add_argument('--confirm-stale', action='store_true')
     p = commands.add_parser('_orca')
     p.add_argument('action', choices=('spec', 'link', 'settle', 'account'))
     p.add_argument('--run', required=True)
@@ -209,11 +215,56 @@ def close_blockers(run):
     return blockers + state.completion_blockers(run | {'workspace_dirty': live['dirty']})
 
 
+def start_context(data, workspace):
+    """Profile, codegraph and rules delivered with start; a lookup error is reported, never fatal."""
+    context, errors = {'profile': None, 'codegraph': None, 'rules_count': 0}, []
+    for key, lookup in (('profile', lambda: profile.show(data, workspace)),
+                        ('codegraph', lambda: profile.codegraph_index(workspace)),
+                        ('rules_count', lambda: rules.count(data, workspace))):
+        try:
+            context[key] = lookup()
+        except (DevFlowError, OSError, ValueError, KeyError, TypeError) as exc:
+            errors.append(f'{key}: {exc}')
+    if isinstance(context['profile'], dict):
+        context['profile'].pop('next_action', None)
+    context['errors'] = errors
+    return context
+
+
+def scope_rules(data, task):
+    """Project rules for the assignment's scope, so workers need no separate _rules for call."""
+    paths = list(dict.fromkeys(task['write_scope'] + task['read_scope']))
+    if not paths:
+        return
+    try:
+        found = rules.for_scope(data, task['workspace'], paths)
+        task['rules'], task['rules_truncated'] = found['rules'], found['truncated']
+    except (DevFlowError, OSError, ValueError, KeyError, TypeError) as exc:
+        task['rules'], task['rules_error'] = [], str(exc)
+
+
+def check_lenses(run, task, review):
+    missing = state.missing_lenses(state.task_review_plan(run, task), (review or {}).get('coverage'))
+    if missing:
+        raise DevFlowError('Review coverage must address every planned lens: missing ' + ', '.join(missing))
+
+
+def record_warnings(run, task, result, usage):
+    warnings = []
+    if usage is None and not any(m.get('task_id') == task['task_id'] for m in run.get('metrics', [])):
+        warnings.append(state.USAGE_MISSING)
+    if (task['role'] in ('implementer', 'fixer') and state.task_review_plan(run, task)
+            and result['files_changed'] and 'self_review' not in result):
+        warnings.append(state.SELF_REVIEW_MISSING)
+    return warnings
+
+
 def prepare_brief_result(run, task, brief):
     """Expand a factual worker handoff without inferring checks, usage or authorship."""
     allowed = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision',
                'result_revision', 'files_inspected', 'commits', 'decisions', 'validation', 'findings',
-               'criteria_results', 'risks', 'out_of_scope', 'questions', 'next_action', 'review', 'usage'}
+               'criteria_results', 'risks', 'out_of_scope', 'questions', 'next_action', 'review', 'usage',
+               'self_review'}
     required = {'run_id', 'task_id', 'worker_id', 'role', 'status', 'summary', 'observed_revision', 'result_revision'}
     if not isinstance(brief, dict) or set(brief) - allowed or required - set(brief):
         raise DevFlowError('Brief result requires explicit run/task/worker identity, role, status, summary, observed_revision and result_revision; only factual evidence fields are accepted')
@@ -224,7 +275,7 @@ def prepare_brief_result(run, task, brief):
     result = state.empty_result(task, brief['worker_id'])
     for field in ('status', 'summary', 'observed_revision', 'result_revision', 'files_inspected', 'commits',
                   'decisions', 'validation', 'findings', 'criteria_results', 'risks', 'out_of_scope', 'questions',
-                  'next_action', 'review', 'usage'):
+                  'next_action', 'review', 'usage', 'self_review'):
         if field in brief:
             result[field] = brief[field]
     result['workspace_dirty'] = live['dirty']
@@ -247,6 +298,30 @@ def prepare_brief_result(run, task, brief):
     return result
 
 
+def abandon(data, args):
+    """Cancel a stale run whose session is gone; branches and worktrees are always preserved."""
+    if not args.confirm_stale:
+        raise DevFlowError('_run abandon needs --confirm-stale (confirm with the user that the run is abandoned)')
+    if args.reason is None:
+        raise DevFlowError('_run abandon needs a nonempty --reason')
+    reason = state.one_line(args.reason, '--reason', None)
+    state.load(data, args.run)  # Unknown runs fail before a lock folder is created.
+    with state.RunLock(data, args.run, args.owner or 'abandon'):
+        run = state.load(data, args.run)
+        if run['status'] != 'active':
+            raise DevFlowError(f"Only an active run can be abandoned (status: {run['status']})")
+        if not state.is_stale(run):
+            raise DevFlowError(f'Run is not stale: idle {state.hours_idle(run)} h, abandon needs more than '
+                               f'{state.STALE_HOURS} h; close it from its own session or claim it')
+        # Owner check is skipped: the original session is gone. Who abandoned it is recorded instead.
+        run['status'] = 'cancelled'
+        run['abandoned'] = {'reason': reason, 'at': now(), 'by': args.owner}
+        run['next_action'] = 'Abandoned stale run; branch and worktree preserved'
+        state.mark_features(run, 'abandon')
+        state.save(data, run, 'abandon')
+        return run
+
+
 def run_command(args, ctx):
     data, root, repo = Path(ctx.data_dir), Path(ctx.root), Path(ctx.repo)
     if args.dry_run and args.action != 'record':
@@ -267,6 +342,10 @@ def run_command(args, ctx):
     request_file = getattr(args, 'request_file', None)
     if request_file is not None and args.action != 'start':
         raise DevFlowError('--request-file only applies to start')
+    if getattr(args, 'blockers_confirmed', None) is not None and (args.action != 'task' or args.role != 'fixer'):
+        raise DevFlowError('--blockers-confirmed only applies to task --role fixer')
+    if (getattr(args, 'reason', None) is not None or getattr(args, 'confirm_stale', False)) and args.action != 'abandon':
+        raise DevFlowError('--reason/--confirm-stale only apply to abandon')
     if args.action == 'start':
         require(args.mode, args.request, args.owner, args.runtime)
         if not args.criterion:
@@ -302,7 +381,7 @@ def run_command(args, ctx):
         state.mark_features(run, 'level:full', args.executor == 'orca' and 'executor:orca',
                             identity.get('warning') and 'identity_warning')
         state.save(data, run, 'execution backend selected')
-        return run | {'identity': identity}
+        return run | {'identity': identity, 'context': start_context(data, run['workspace'])}
     require(args.run)
     if args.action == 'show':
         return state.status(data, run_id=args.run)
@@ -331,12 +410,15 @@ def run_command(args, ctx):
                     or review.get('verdict') not in ('passed', 'changes_required', 'incomplete')
                     or not isinstance(review.get('coverage'), str) or not review['coverage'].strip()):
                 raise DevFlowError('Reviewer result needs review.verdict and explicit nonempty review.coverage')
+            check_lenses(run, task, review)
         if result.get('usage') is not None:
             metrics.entry({**result['usage'], 'role': task['role'], 'task_id': task['task_id'],
                            'worker_id': result['worker_id']})
         return {'valid': True, 'scope': 'schema_and_assignment', 'state_changed': False,
                 'task_id': task['task_id'], 'note': 'Not accepted or recorded. Coordinator record --dry-run '
                 'still checks settlement, identity, live Git, reviewer artifact and duplicate findings.'}
+    if args.action == 'abandon':
+        return abandon(data, args)
     require(args.owner)
     if args.action in ('template', 'check-close'):
         # Read-only helpers: no run lock, no state write (feature use goes to the features.json sidecar).
@@ -347,7 +429,7 @@ def run_command(args, ctx):
             blockers = close_blockers(run)
             # Token budget is partial data: a warning, never a blocker.
             return {'can_complete': not blockers, 'blockers': blockers, 'budget': state.budget_summary(run),
-                    'budget_warnings': state.budget_warnings(run)}
+                    'budget_warnings': state.budget_warnings(run), 'retro_draft': state.retro_draft(run)}
         require(args.task_id)
         task = next((t for t in run['tasks'] if t['task_id'] == args.task_id), None)
         if not task:
@@ -396,6 +478,14 @@ def run_command(args, ctx):
             run['current_revision'], run['workspace_dirty'] = live['revision'], live['dirty']
         elif args.action == 'task':
             require(args.role, args.objective)
+            confirmed = getattr(args, 'blockers_confirmed', None)
+            if confirmed is not None:
+                state.one_line(confirmed, '--blockers-confirmed', None)
+            rounds = state.changes_required_reviews(run)
+            if args.role == 'fixer' and rounds >= 2 and confirmed is None:
+                raise DevFlowError(f'{rounds} reviews already required changes: before another fixer, verify that the '
+                                   'latest blockers are real blockers and not suggestions, then pass '
+                                   '--blockers-confirmed TEXT stating what you checked')
             state.check_worker_budget(run)
             live = gitops.inspect(run['workspace'])
             if live['branch'] != run['branch'] or live['revision'] != run['current_revision']:
@@ -442,6 +532,9 @@ def run_command(args, ctx):
                                    args.budget_minutes, parent_task_id,
                                    grant.get('delegation') if grant else None, grant.get('depth', 1) if grant else 1)
             nesting.apply_assignment(run, task, grant)
+            if confirmed is not None:
+                task['blockers_confirmed'] = confirmed
+            scope_rules(data, task)
             if replacing:
                 task['replaces'] = replacing['task_id']
                 if replacing.get('family_root'):
@@ -509,7 +602,8 @@ def run_command(args, ctx):
                                                 'result': known[args.replaces]['result']})
             run['tasks'].append(task)
             state.mark_features(run, getattr(args, 'can_delegate', False) and 'nesting', bool(sources) and 'context_from',
-                                args.budget_minutes is not None and 'budget_minutes')
+                                args.budget_minutes is not None and 'budget_minutes',
+                                confirmed is not None and 'blockers_confirmed')
             state.save(data, run, 'task assigned')
             return task
         elif args.action == 'record':
@@ -564,14 +658,17 @@ def run_command(args, ctx):
                 delta_artifact = task.get('review_delta')
                 if delta_artifact and digest(Path(delta_artifact['path']).read_bytes()) != delta_artifact['sha256']:
                     raise DevFlowError('Reviewer delta artifact missing/modified; reassign review')
+                check_lenses(run, task, review)
             state.append_findings({'findings': copy.deepcopy(run['findings'])}, result['findings'])
+            # Warnings never block: they point at evidence the Coordinator may still want to add.
+            warnings = record_warnings(run, task, result, usage)
             if args.dry_run:
                 metrics.note_readonly(data, args.run, 'dry_run')
                 return {'valid': True, 'dry_run': True, 'task_id': task['task_id'], 'role': task['role'],
                         'status': result['status'], 'candidate_revision': candidate,
                         'workspace_dirty': live['dirty'], 'files_changed': sorted(actual),
                         'review_verdict': review.get('verdict') if task['role'] == 'reviewer' else None,
-                        'usage_recorded': usage is not None, 'state_changed': False}
+                        'usage_recorded': usage is not None, 'state_changed': False, 'warnings': warnings}
             task['status'], task['result'] = result['status'], result
             task['result_recorded_at'] = now()
             if result['status'] == 'done' and task.get('replaces'):
@@ -588,19 +685,24 @@ def run_command(args, ctx):
                 run['authors'].append(result['worker_id'])
             if task['role'] == 'reviewer':
                 run['review'] = {'verdict': review['verdict'], 'revision': candidate, 'worker_id': result['worker_id']}
+            state.mark_features(run, 'self_review' in result and 'self_review')
             atomic_write(state.run_dir(data, args.run) / 'results' / (safe_id(result['task_id']) + '.json'), json_bytes(result))
+            state.save(data, run, args.action)
+            return run | {'warnings': warnings}
         elif args.action == 'update':
             require(args.input)
             update = read_json(args.input)
             allowed = {'phase', 'criteria_results', 'validations', 'required_checks', 'review_required',
                        'findings', 'measurement', 'decisions', 'questions', 'next_action', 'workers', 'incident',
-                       'budget'}
+                       'budget', 'review_plan'}
             if not isinstance(update, dict) or set(update) - allowed:
                 raise DevFlowError('Update contains unsupported fields; snapshots/identity/review cannot be overridden')
             if run.get('executor') == 'orca' and update.get('workers'):
                 raise DevFlowError('Orca owns worker activity; use Dispatch evidence instead of native worker records')
             if 'incident' in update:
                 state.validate_incident(update['incident'])
+            if 'review_plan' in update:
+                state.validate_review_plan(update['review_plan'])
             for check in update.get('validations', []):
                 state.validate_check(check)
             for criterion in update.get('criteria_results', []):
@@ -633,6 +735,9 @@ def run_command(args, ctx):
             if 'incident' in update:
                 state.record_incident(run, update.pop('incident'))
                 state.mark_features(run, 'incident')
+            if 'review_plan' in update:
+                state.set_review_plan(run, update.pop('review_plan'))
+                state.mark_features(run, 'review_plan')
             run.update(update)
         elif args.action == 'resolve':
             require(args.input)
@@ -792,7 +897,8 @@ def dispatch(args, ctx):
             next_action += ('; after its commits run _lite review-diff and record an independent review '
                             'with _lite review before reporting')
         return record | {'workspace': info['workspace'], 'identity': identity,
-                         'session_model_hint': lite.SESSION_MODEL_HINT, 'next_action': next_action}
+                         'session_model_hint': lite.SESSION_MODEL_HINT, 'next_action': next_action,
+                         'context': start_context(data, info['workspace'])}
     if args.command == 'config':
         if args.action != 'set' and any((args.runtime, args.role, args.model, args.effort, args.inherit)):
             raise DevFlowError('Model selection flags require config set')

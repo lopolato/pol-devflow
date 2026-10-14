@@ -18,7 +18,7 @@ Si Context7 falta, falla o no cubre esa librería/versión, usar documentación 
 
 ## Código: codegraph
 
-codegraph es un índice del código del proyecto (símbolos, llamadas, impacto). Es optativo: se usa solo si `_profile show` devuelve `codegraph` y la sesión tiene la herramienta `codegraph_explore`.
+codegraph es un índice del código del proyecto (símbolos, llamadas, impacto). Es optativo: se usa solo si el `context` de start trae `codegraph` y la sesión tiene la herramienta `codegraph_explore`.
 
 - Para localizar código, flujos, llamadas o impacto de un cambio, consultar primero `codegraph_explore` con `projectPath` = `codegraph.project_path`; después leer solo los fragmentos necesarios. Sustituye bucles de búsqueda y lectura, no la lectura del código que se va a cambiar o revisar.
 - En worktrees de full el índice refleja el checkout principal, no la rama de tarea: confirmar con lectura en el workspace lo que haya cambiado en la rama.

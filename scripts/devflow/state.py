@@ -22,6 +22,14 @@ LIST_FIELDS = ('criteria_results', 'findings', 'files_inspected', 'files_changed
                'decisions', 'validation', 'risks', 'out_of_scope', 'questions')
 REQUEST_LIMIT = 64 * 1024
 REQUEST_CHANGED = 'Literal request changed after start; start a new run or restore it'
+# Review lenses: what the risk of this change needs checked, set once and passed to every worker.
+LENSES = ('requirements', 'security', 'money', 'communications', 'data', 'concurrency', 'tests')
+SELF_REVIEW_STATUSES = ('ok', 'risk', 'not_applicable')
+PLAN_ROLES = ('implementer', 'fixer', 'tester', 'reviewer')
+NOTE_LIMIT = 200
+STALE_HOURS = 24
+SELF_REVIEW_MISSING = 'self_review missing for planned lenses'
+USAGE_MISSING = 'usage not recorded for this task'
 
 
 def run_dir(data, run_id):
@@ -117,6 +125,109 @@ def load(data, run_id):
     return value
 
 
+def one_line(value, name, limit=NOTE_LIMIT):
+    if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 or c == '\x7f' for c in value):
+        raise DevFlowError(f'{name} must be a nonempty single-line string')
+    if limit and len(value) > limit:
+        raise DevFlowError(f'{name} must be at most {limit} characters')
+    return value
+
+
+def validate_review_plan(value):
+    if not isinstance(value, dict) or set(value) != {'lenses', 'reason'}:
+        raise DevFlowError('review_plan needs exactly lenses and reason')
+    lenses = value['lenses']
+    if (not isinstance(lenses, list) or not lenses or any(lens not in LENSES for lens in lenses)
+            or len(set(lenses)) != len(lenses)):
+        raise DevFlowError('review_plan lenses must be a nonempty list of unique lenses: ' + ', '.join(LENSES))
+    return {'lenses': list(lenses), 'reason': one_line(value['reason'], 'review_plan reason')}
+
+
+def set_review_plan(run, value):
+    plan = validate_review_plan(value)
+    if run.get('review_plan'):
+        # A replaced plan stays visible: earlier workers were assigned against it.
+        run.setdefault('review_plan_history', []).append(run['review_plan'])
+    run['review_plan'] = plan | {'at': now()}
+    return run['review_plan']
+
+
+def task_review_plan(run, task):
+    """Plan the worker was given; tasks assigned before 1.0.20 fall back to the run plan."""
+    return task['review_plan'] if 'review_plan' in task else run.get('review_plan')
+
+
+def validate_self_review(items):
+    if not isinstance(items, list):
+        raise DevFlowError('self_review must be a list of {lens, status, note}')
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict) or set(item) - {'lens', 'status', 'note'} or not {'lens', 'status'} <= set(item):
+            raise DevFlowError('self_review entries need lens and status plus an optional note')
+        if item['lens'] not in LENSES:
+            raise DevFlowError('self_review lens must be one of ' + ', '.join(LENSES))
+        if item['lens'] in seen:
+            raise DevFlowError(f"self_review repeats lens {item['lens']}")
+        seen.add(item['lens'])
+        if item['status'] not in SELF_REVIEW_STATUSES:
+            raise DevFlowError('self_review status must be one of ' + ', '.join(SELF_REVIEW_STATUSES))
+        if 'note' in item:
+            one_line(item['note'], 'self_review note')
+    return items
+
+
+def missing_lenses(plan, coverage):
+    text = (coverage or '').lower()
+    return [lens for lens in (plan or {}).get('lenses', []) if lens.lower() not in text]
+
+
+def changes_required_reviews(run):
+    return sum(1 for t in run.get('tasks', []) if t.get('role') == 'reviewer' and t.get('result')
+               and (t['result'].get('review') or {}).get('verdict') == 'changes_required')
+
+
+def hours_idle(run, at=None):
+    at = at or dt.datetime.now(dt.timezone.utc)
+    try:
+        stamp = dt.datetime.fromisoformat(run.get('updated_at'))
+    except (TypeError, ValueError):
+        return None
+    if not stamp.tzinfo:
+        return None
+    return round((at - stamp).total_seconds() / 3600, 1)
+
+
+def is_stale(run, at=None):
+    idle = hours_idle(run, at)
+    return run.get('status') == 'active' and idle is not None and idle > STALE_HOURS
+
+
+def stale_runs(runs, at=None):
+    return [{'run_id': r['run_id'], 'mode': r.get('mode'), 'updated_at': r.get('updated_at'),
+             'hours_idle': hours_idle(r, at)} for r in runs if is_stale(r, at)]
+
+
+def retro_draft(run):
+    """Factual problems of a run, prefilled for _retro add; never recorded automatically."""
+    problems = []
+    reviews = changes_required_reviews(run)
+    if reviews:
+        problems.append({'category': 'process', 'text': f'{reviews} review rounds with changes_required'})
+    fixers = sum(1 for t in run.get('tasks', []) if t.get('role') == 'fixer')
+    if fixers:
+        problems.append({'category': 'process', 'text': f'{fixers} fixer tasks'})
+    overdue = overdue_tasks(run)
+    if overdue:
+        problems.append({'category': 'process',
+                         'text': ('overdue tasks: ' + ', '.join(t['task_id'] for t in overdue))[:NOTE_LIMIT]})
+    exceeded = budget_summary(run)['exceeded']
+    if exceeded:
+        problems.append({'category': 'process', 'text': 'budget warnings: ' + ', '.join(exceeded) + ' exceeded'})
+    if not run.get('metrics'):
+        problems.append({'category': 'tooling', 'text': 'no usage metrics recorded'})
+    return {'went_well': [], 'problems': problems[:5], 'suggestions': []}
+
+
 def mark_features(record, *names):
     record['features'] = sorted(set(record.get('features') or []) | {n for n in names if n})
     return record['features']
@@ -188,7 +299,7 @@ def save(data, run, event):
     safe_id(run['run_id'])
     config.validate(run['config_snapshot'])
     run['updated_at'] = now()
-    if event == 'close' and run.get('status') in FINAL_STATES:
+    if event in ('close', 'abandon') and run.get('status') in FINAL_STATES:
         # Settlement/accounting may update updated_at later; the closure endpoint must stay stable.
         run['closed_at'] = run['updated_at']
     run.setdefault('events', []).append({'at': run['updated_at'], 'event': event})
@@ -221,14 +332,18 @@ def status(data, run_id=None, repository=None, verify_git=True):
                     candidates.append(item)
             except DevFlowError as exc:
                 errors.append(str(exc))
+        stale = stale_runs(candidates)
         if len(candidates) != 1:
             return {'candidates': [{'run_id': r['run_id'], 'mode': r['mode'], 'status': r['status'],
                                     'phase': r['phase'], 'updated_at': r['updated_at']} for r in candidates],
-                    'errors': errors, 'message': 'No unique run; select --run or start a new task'}
+                    'errors': errors, 'message': 'No unique run; select --run or start a new task',
+                    'stale_runs': stale}
         run = candidates[0]
     info = {'run': run, 'worker_activity': 'Recorded state only; live worker activity is not confirmed',
             'last_recorded_at': run['updated_at'], 'evidence_current': 'not_verified',
             'overdue_tasks': overdue_tasks(run), 'timing': elapsed_timing(run), 'budget': budget_summary(run)}
+    if not run_id:
+        info['stale_runs'] = stale
     if run.get('nesting'):
         info['delegation_tree'] = delegation_tree(run)
     if verify_git:
@@ -377,6 +492,8 @@ def make_task(run, role, objective, write_scope, read_scope=None, dependencies=N
             'deliver_to': 'coordinator', 'status': 'pending', 'result': None,
             'parent_task_id': parent_task_id, 'depth': depth,
             'delegation': copy.deepcopy(delegation or {'enabled': False})}
+    if role in PLAN_ROLES:
+        task['review_plan'] = copy.deepcopy(run.get('review_plan'))
     if task['delegation'].get('enabled'):
         task['constraints'][0] = 'Deliver to Coordinator; no push or merge main/master'
         task['constraints'].append('You may request read-only explorer/debugger/tester child tasks through the Coordinator; do not edit shared run state')
@@ -463,6 +580,10 @@ def validate_result(task, result):
         validate_finding(finding)
     if 'code_map' in result:
         validate_code_map(task['workspace'], result['code_map'])
+    if 'self_review' in result:
+        if task['role'] not in ('implementer', 'fixer'):
+            raise DevFlowError('Only implementer/fixer results may include self_review')
+        validate_self_review(result['self_review'])
     if 'subdelegation_trace' in result:
         trace = result['subdelegation_trace']
         if not task.get('delegation', {}).get('enabled'):

@@ -19,7 +19,7 @@ Usar un proyecto pequeño y propio, con Git limpio y en main. Abrir una sesión 
 - ¿Hizo lo esperado? Si no, qué hizo.
 - Modelos que aparecen en el resumen final (configurado y efectivo).
 - Tiempo y tokens: tras cada tarea, `/pol-devflow stats` muestra lo registrado por rol.
-- Si se guardó el perfil del proyecto (`_profile show`) y si la segunda tarea reutilizó sus comandos sin redescubrirlos.
+- Si el `context` de start traía el perfil del proyecto y si la segunda tarea reutilizó sus comandos sin redescubrirlos.
 - Reglas o pasos que parecieron sobrar o que el Coordinator se saltó (`/pol-devflow retro` resume las retros guardadas).
 - Preguntas que hizo y si eran necesarias.
 

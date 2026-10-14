@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.19)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.20)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -169,3 +169,14 @@ Ideas tomadas de gentle-ai v4.1.0 (delegar por un motivo y no por tamaño; espec
 - `release.py --wait-ci [--ci-timeout MIN]`: espera a que la CI termine, también cuando las comprobaciones aún no existen justo después de un push; falla si alguna falla o se agota el tiempo.
 - Evaluación `auth-chooses-full` actualizada: una tarea pequeña de permisos debe elegir lite+review o full.
 - Pruebas: test_request_ref.py (8), test_install_obsolete.py (4), test_docs_consistency.py (7) y 6 nuevas de `--wait-ci` en test_release.py; 15 de las nuevas fallan contra la 1.0.18. Suite completa: 282 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido.
+
+## 1.0.20 · Acertar a la primera · 14/10/2026
+
+Motivada por datos reales de 14 ejecuciones: 13 en full con revisión obligatoria, ~2 reviewers y ~1,3 fixers por ejecución, y funciones opcionales (perfil, reglas, codegraph, retro, métricas) nunca usadas porque dependían de que el Coordinator se acordara.
+
+- Plan de revisión por lentes: `_run update` con `review_plan` {lenses, reason} (requirements, security, money, communications, data, concurrency, tests). Va en los encargos de implementer, fixer, tester y reviewer; la `coverage` del reviewer debe nombrar cada lente del plan.
+- Autorrevisión: implementer y fixer devuelven `self_review` por lente (ok, risk, not_applicable); si falta con un plan activo, `record` avisa.
+- Segunda vuelta controlada: con dos o más revisiones `changes_required`, un nuevo fixer exige `--blockers-confirmed` con lo que se comprobó.
+- Contexto automático: `_run start` y `_lite start` devuelven `context` (perfil, codegraph, número de reglas); cada encargo con alcance trae sus `rules`; `record` devuelve `warnings` (uso no registrado, autorrevisión ausente); `check-close` propone un `retro_draft` con hechos de la ejecución. Las instrucciones dejan de pedir esas consultas a mano.
+- Higiene: `status` lista `stale_runs` (activas sin actividad más de 24 h) y `_run abandon --run ID --reason TEXT --confirm-stale` las cierra como canceladas sin tocar ramas ni worktrees.
+- Pruebas: test_first_pass.py (9) y test_auto_context.py (11); 18 de 20 fallan contra la 1.0.19 (las otras 2 protegen comportamiento existente). Suite completa: 303 casos con la configuración por defecto y con `core.autocrlf=false`, 1 omitido. Las instrucciones que lee el modelo crecen 2 líneas.

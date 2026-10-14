@@ -10,7 +10,7 @@ ACTIVITIES = ('implementation', 'tests', 'review', 'reporting', 'coordination', 
 ROLES = (*config.ROLES,)
 AUTO_FEATURES = ('level:lite', 'level:lite+review', 'level:full', 'executor:orca', 'review:lite', 'nesting',
                  'checkpoint', 'template', 'dry_run', 'check_close', 'context_from', 'budget_minutes', 'incident',
-                 'identity_warning')
+                 'identity_warning', 'review_plan', 'self_review', 'blockers_confirmed', 'abandon')
 DECLARED_FEATURES = ('codegraph', 'context7', 'memory', 'profile_reused', 'profile_saved', 'retro', 'rules')
 COMMANDS = ('cleanup',)  # Only state-changing run-less invocations (cleanup --apply) are logged.
 
