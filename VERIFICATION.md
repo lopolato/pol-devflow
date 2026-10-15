@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.22)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.23)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -199,3 +199,13 @@ Ideas adaptadas de gentle-ai (MIT); análisis completo en docs/analisis-gentle-a
 - `release.py`: la autenticación de `gh` se comprueba en local (`gh auth token`). Antes, `gh auth status` consultaba GitHub y un corte de red hacía saltarse la comprobación de la CI con solo un aviso. Los cortes de conexión se reintentan 3 veces (20 s) al comprobar y durante `--wait-ci`; si persisten, la publicación se detiene sin etiquetar.
 - Origen: migración del equipo del usuario del Python de la Microsoft Store al de python.org, y dos cortes de conexión con GitHub durante la publicación de la 1.0.21.
 - Pruebas: test_python_env.py (3) y 3 nuevas en test_release.py; ajuste del contexto esperado en test_auto_context.py.
+
+## 1.0.23 · Cierre de lite y métricas observadas · 15/10/2026
+
+- `_lite finish --lite ID [--status completed|partial|cancelled] [--reason TEXTO] [--revision SHA]`: cierra el registro lite con `closed_at`, revisión final y número de commits. `completed` exige commits desde la base y, en lite+review, revisión vigente; `partial`/`cancelled` exigen motivo; `--revision` acepta el commit final cuando la rama ya se mezcló y borró (debe descender de la base). Orca lite exige `_lite account` antes. Antes ningún registro lite salía de `pending`, así que `stats` no tenía su resultado ni su duración.
+- Ramas: los acentos se transliteran (`página` → `pagina`) y el nombre se corta en un límite de palabra a 40 caracteres.
+- `untracked_preserved` guarda como mucho 20 rutas más `untracked_preserved_count`; un proyecto real guardaba 1.351 rutas (98 KB) en cada registro y en el encargo de pol-lite.
+- `stats`: por rol, `task_elapsed_s` y `avg_task_elapsed_s` con el intervalo observado entre asignación y resultado registrado, disponible aunque el anfitrión no informe tokens ni duración.
+- Error y feature: una incidencia o criterio visual se comprueba en un navegador si la sesión tiene uno; si no, se pide al usuario una comprobación concreta antes de cerrar.
+- Origen: análisis de dos ejecuciones reales del 15/10/2026 (una lite y una full con refutación corroborada y re-revisión acotada).
+- Pruebas: test_lite_finish.py (8) y una nueva en test_timing.py.

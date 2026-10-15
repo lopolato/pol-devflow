@@ -39,6 +39,22 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(result['roles'], {})
         self.assertIn('not agent compute', result['note'])
 
+    def test_stats_role_task_elapsed_from_recorded_results_only(self):
+        task = lambda tid, role, start, end: {'task_id': tid, 'role': role, 'status': 'done',
+                                              'assigned_at': start, 'result_recorded_at': end}
+        record = {'mode': 'error', 'status': 'completed', 'created_at': '2026-01-01T00:00:00+00:00',
+                  'closed_at': '2026-01-01T00:20:00+00:00',
+                  'tasks': [task('a', 'fixer', '2026-01-01T00:00:00+00:00', '2026-01-01T00:08:00+00:00'),
+                            task('b', 'fixer', '2026-01-01T00:10:00+00:00', '2026-01-01T00:12:00+00:00'),
+                            task('c', 'reviewer', '2026-01-01T00:12:00+00:00', None)],
+                  'metrics': [{'role': 'reviewer', 'tokens': None, 'duration_ms': None, 'model': None}]}
+        with patch.object(metrics, '_records', return_value=[('full', record)]):
+            roles = metrics.stats('.', all_repos=True)['roles']
+        self.assertEqual((roles['fixer']['task_elapsed_s'], roles['fixer']['avg_task_elapsed_s']), (600.0, 300.0))
+        self.assertEqual(roles['fixer']['calls'], 0)
+        self.assertIsNone(roles['reviewer']['avg_task_elapsed_s'])
+        self.assertEqual(roles['reviewer']['calls'], 1)
+
     def test_cancelled_unfinished_task_stops_at_explicit_close_event(self):
         run = {'status': 'cancelled', 'created_at': '2026-01-01T00:00:00+00:00',
                'updated_at': '2026-01-02T00:00:00+00:00',

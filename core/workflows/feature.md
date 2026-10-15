@@ -8,6 +8,6 @@ Si el nivel es lite, seguir [lite](lite.md) en lugar de estos pasos.
 4. Asignar implementación con scopes y dependencias explícitos. Las escrituras son secuenciales; las investigaciones independientes de lectura pueden ir en una ola antes de implementar.
 5. Implementar, añadir tests útiles y crear checkpoints propios. En cambios con estado y varios pasos, incluir la prueba de integración del recorrido principal en la primera entrega.
 6. Obtener revisión independiente del diff integrado cuando sea obligatoria y ejecutar pruebas dirigidas (Tester y Reviewer de lectura pueden ir en paralelo). Corregir solo blockers aceptados y usar tests afectados durante las correcciones; las sugerencias no disparan fixes.
-7. Tras aprobar las correcciones, ejecutar las comprobaciones completas y costosas sobre el candidato final; cerrar con evidencia actual de todos los criterios.
+7. Tras aprobar las correcciones, ejecutar las comprobaciones completas y costosas sobre el candidato final; cerrar con evidencia actual de todos los criterios. Un criterio visual se comprueba en un navegador si la sesión tiene uno; si no, pedir al usuario una comprobación concreta antes de cerrar como parcial.
 
 En tareas pequeñas Coordinator puede implementar y probar; su propia revisión no acredita independencia.

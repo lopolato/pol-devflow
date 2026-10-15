@@ -99,9 +99,45 @@ def record_review(record, value):
     return result
 
 
-def status(record):
-    if record.get('kind') != 'lite':
-        raise DevFlowError('Not a lite record')
+FINISH_STATES = ('completed', 'partial', 'cancelled')
+
+
+def finish(record, status='completed', revision=None, reason=None):
+    """Close a lite record so stats and cleanup see its real outcome; the branch is never touched."""
+    if record.get('status') in state.FINAL_STATES:
+        raise DevFlowError(f"Lite record already closed ({record['status']})")
+    if status not in FINISH_STATES:
+        raise DevFlowError('Lite finish status must be one of ' + ', '.join(FINISH_STATES))
+    if status != 'completed' and not (reason or '').strip():
+        raise DevFlowError('partial/cancelled needs --reason')
+    head = _branch_revision(record)
+    if revision:
+        # The branch may already be merged and deleted: accept an explicit commit that descends from the base.
+        try:
+            resolved = gitops.git(record['repository'], 'rev-parse', '--verify', revision + '^{commit}')
+            gitops.git(record['repository'], 'merge-base', '--is-ancestor', record['base_revision'], resolved)
+        except DevFlowError:
+            raise DevFlowError('--revision must be a commit that descends from the lite base revision') from None
+        if head and head != resolved:
+            raise DevFlowError('--revision differs from the lite branch head; omit it while the branch exists')
+        head = resolved
+    if status == 'completed':
+        if head is None:
+            raise DevFlowError('Lite branch not found: pass --revision with the final commit '
+                               '(e.g. the merged one) or close as partial/cancelled with --reason')
+        if head == record['base_revision']:
+            raise DevFlowError('Nothing to complete: no commits since the lite base revision')
+        if record.get('review_required') and not status_view(record)['review_current']:
+            raise DevFlowError('lite+review needs a current passed review before completing (_lite status)')
+    commits = (int(gitops.git(record['repository'], 'rev-list', '--count', f"{record['base_revision']}..{head}"))
+               if head else None)
+    record.update(status=status, closed_at=now(), final_revision=head, commits=commits,
+                  close_reason=(reason or '').strip() or None)
+    return {'id': record['id'], 'status': status, 'final_revision': head, 'commits': commits,
+            'closed_at': record['closed_at']}
+
+
+def status_view(record):
     review, source = record.get('review') or {}, record.get('review_input') or {}
     head = _branch_revision(record)
     try:
@@ -110,4 +146,10 @@ def status(record):
         unchanged = False
     current = (review.get('verdict') == 'passed' and head is not None and unchanged
                and review.get('revision') == source.get('revision') == head)
-    return record | {'branch_revision': head, 'review_current': current}
+    return {'branch_revision': head, 'review_current': current}
+
+
+def status(record):
+    if record.get('kind') != 'lite':
+        raise DevFlowError('Not a lite record')
+    return record | status_view(record)

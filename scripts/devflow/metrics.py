@@ -183,9 +183,14 @@ def stats(data, repository=None, all_repos=False, since_days=None):
             unmeasured += 1
         if any(i.get('tokens') is not None for i in items):
             bucket['measured'] += 1
+        # Observed assignment -> result interval per task: available even when the runtime reports no usage.
+        for task in timing['tasks']:
+            if task.get('role') and task.get('elapsed_seconds') is not None and task.get('result_recorded_at'):
+                role = _role_bucket(roles, task['role'])
+                role['task_elapsed_s'] += task['elapsed_seconds']
+                role['task_elapsed_known'] += 1
         for item in items:
-            role = roles.setdefault(item['role'], {'calls': 0, 'tokens': 0, 'tokens_known': 0,
-                                                   'duration_ms': 0, 'duration_known': 0, 'models': {}})
+            role = _role_bucket(roles, item['role'])
             role['calls'] += 1
             if item.get('tokens') is not None:
                 role['tokens'] += item['tokens']
@@ -206,6 +211,9 @@ def stats(data, repository=None, all_repos=False, since_days=None):
     for role in roles.values():
         role['avg_tokens'] = role['tokens'] // role['tokens_known'] if role['tokens_known'] else None
         role['avg_duration_s'] = round(role['duration_ms'] / role['duration_known'] / 1000, 1) if role['duration_known'] else None
+        role['task_elapsed_s'] = round(role['task_elapsed_s'], 1)
+        role['avg_task_elapsed_s'] = (round(role['task_elapsed_s'] / role['task_elapsed_known'], 1)
+                                      if role['task_elapsed_known'] else None)
     for bucket in tasks.values():
         bucket['avg_tokens_measured'] = bucket['tokens'] // bucket['measured'] if bucket['measured'] else None
         bucket['avg_wall_clock_elapsed_seconds'] = (round(bucket['wall_clock_elapsed_seconds'] /
@@ -221,4 +229,11 @@ def stats(data, repository=None, all_repos=False, since_days=None):
             'total_tokens_known': total, 'tasks_without_metrics': unmeasured,
             'note': 'Only recorded usage is counted; unavailable values are never estimated. Wall-clock '
                     'elapsed includes waiting, coordination and checks, not agent compute; overlapping runs are not additive. '
-                    'Activity durations include only explicit known measurements and are not added into total time.'}
+                    'Activity durations include only explicit known measurements and are not added into total time. '
+                    'task_elapsed_s is the observed interval from assignment to recorded result (includes waiting).'}
+
+
+def _role_bucket(roles, name):
+    return roles.setdefault(name, {'calls': 0, 'tokens': 0, 'tokens_known': 0, 'duration_ms': 0,
+                                   'duration_known': 0, 'task_elapsed_s': 0.0, 'task_elapsed_known': 0,
+                                   'models': {}})

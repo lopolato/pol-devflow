@@ -18,7 +18,8 @@ HELP = {
     'lite': 'error|feature --lite <description>: small clear task on a new branch in the current checkout, '
             'delegated to the pol-lite worker; escalates to full mode when it stops being small. '
             '--lite --review adds one independent review bound to the committed diff '
-            '(_lite review-diff, _lite review, _lite status).',
+            '(_lite review-diff, _lite review, _lite status). Close every lite record with '
+            '_lite finish --lite ID [--status completed|partial|cancelled] [--reason TEXT] [--revision SHA].',
     'cleanup': 'cleanup [--into REF] [--remote REMOTE] [--apply] [--orca-idle-confirmed] [--discard BRANCH] [--purge-history]: list DevFlow branches, worktrees and closed runs; '
                '--apply removes only merged and clean items after user confirmation; --discard deletes one '
                'unmerged DevFlow branch the user explicitly confirmed. --remote opts into remote deletion; '
@@ -79,7 +80,8 @@ def parser():
     p.add_argument('--remote')
     p.add_argument('--orca-idle-confirmed', action='store_true')
     p = commands.add_parser('_lite')
-    p.add_argument('action', choices=('start', 'link', 'settle', 'account', 'review-diff', 'review', 'status'))
+    p.add_argument('action', choices=('start', 'link', 'settle', 'account', 'review-diff', 'review', 'status',
+                                      'finish'))
     p.add_argument('--mode', choices=('error', 'feature'))
     p.add_argument('--request')
     p.add_argument('--request-file')
@@ -90,6 +92,9 @@ def parser():
     p.add_argument('--base')
     p.add_argument('--review', action='store_true')
     p.add_argument('--author-id')
+    p.add_argument('--status', dest='finish_status', choices=lite.FINISH_STATES)
+    p.add_argument('--revision')
+    p.add_argument('--reason')
     p = commands.add_parser('status')
     p.add_argument('--run')
     p.add_argument('--brief', action='store_true')
@@ -919,6 +924,20 @@ def dispatch(args, ctx):
             raise DevFlowError('--author-id only applies to _lite review-diff')
         if getattr(args, 'request_file', None) is not None and args.action != 'start':
             raise DevFlowError('--request-file only applies to _lite start')
+        if (args.finish_status or args.revision or args.reason) and args.action != 'finish':
+            raise DevFlowError('--status/--revision/--reason only apply to _lite finish')
+        if args.action == 'finish':
+            require(args.lite)
+            path = data / 'lite' / (safe_id(args.lite) + '.json')
+            with FileLock(path.with_suffix('.lock'), args.owner or 'lite'):
+                record = read_json(path)
+                if record.get('kind') != 'lite' or (record.get('coordinator_id') and record['coordinator_id'] != args.owner):
+                    raise DevFlowError('Lite ownership mismatch; pass the Coordinator --owner used at start')
+                if record.get('executor') == 'orca' and record.get('status') != 'settled':
+                    raise DevFlowError('Orca lite needs _lite account before finish')
+                result = lite.finish(record, args.finish_status or 'completed', args.revision, args.reason)
+                atomic_write(path, json_bytes(record))
+                return result
         if args.action == 'status':
             require(args.lite)
             return lite.status(read_json(data / 'lite' / (safe_id(args.lite) + '.json')))
@@ -969,6 +988,7 @@ def dispatch(args, ctx):
         record.update(executor=args.executor, coordinator_id=args.owner, task_id=lite_id,
                       workspace=info['workspace'], status='pending', review_required=args.review,
                       untracked_preserved=info.get('untracked_preserved', []),
+                      untracked_preserved_count=info.get('untracked_preserved_count', 0),
                       request_ref=state.write_request(data / 'lite' / (lite_id + '.request.md'), literal))
         identity = gitops.identity(info['workspace'])
         state.mark_features(record, 'level:lite+review' if args.review else 'level:lite',

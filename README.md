@@ -1,4 +1,4 @@
-# Pol DevFlow 1.0.22
+# Pol DevFlow 1.0.23
 
 La 1.0.21 recorta el ciclo revisión → corrección → nueva revisión: el Reviewer solo informa defectos reales con evidencia (un falso positivo cuesta un ciclo completo), otro Reviewer intenta refutar cada blocker antes de corregir (`_run task --role reviewer --refute-from REVIEW_TASK_ID`: `corroborated`, `refuted` o `inconclusive`), el fixer solo corrige los corroborados, la re-revisión con `--review-from` comprueba solo esos blockers en los archivos corregidos y una segunda corrección exige tu decisión (`--user-approved`). Tras una compactación del contexto, `status --brief` recupera el estado en unas 40 líneas. Ideas adaptadas de gentle-ai: ver [análisis](docs/analisis-gentle-ai.md).
 
@@ -89,6 +89,7 @@ MIT. Ver [LICENSE](LICENSE).
 
 ## Historial
 
+- 1.0.23: `_lite finish` cierra cada lite (completed, partial o cancelled; `--revision` si la rama ya se mezcló), nombres de rama legibles (sin acentos rotos, máximo 40 caracteres), muestra acotada de archivos sin seguimiento, tiempo observado por rol en `stats` y comprobación visual en navegador o pedida al usuario antes de cerrar.
 - 1.0.22: entorno virtual del proyecto en `context.python` (aviso si usa el Python de la Store) y `release.py` que reintenta cortes de conexión sin saltarse nunca la comprobación de la CI.
 - 1.0.21: filtro de precisión del Reviewer, refutación de blockers antes del fixer (`--refute-from`), re-revisión acotada (`frozen_findings`), una corrección por candidato salvo decisión del usuario (`--user-approved`), `status --brief`, presupuestos de contexto y formateadores antes de revisar ([análisis gentle-ai](docs/analisis-gentle-ai.md)).
 - 1.0.20: `review_plan` con lentes, `self_review`, cobertura por lente, `--blockers-confirmed` en la segunda ronda de fixer, `context` en start, `rules` en los encargos, `warnings` en record, `retro_draft` en check-close, `stale_runs` y `_run abandon`.

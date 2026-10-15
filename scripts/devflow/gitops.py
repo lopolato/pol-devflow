@@ -1,6 +1,7 @@
 """Conservative Git support: no main writes, reset, stash, push or force cleanup."""
 import re
 import subprocess
+import unicodedata
 import uuid
 from pathlib import Path
 from .storage import DevFlowError, atomic_write, json_bytes, now, read_json, reject_symlink
@@ -92,8 +93,22 @@ def changed_paths(workspace, base):
             | set(unstaged.split('\0')) | set(untracked.split('\0'))) - {''}
 
 
+BRANCH_SLUG_MAX = 40
+UNTRACKED_LISTED = 20
+
+
+def branch_slug(description):
+    # Transliterate accents (página -> pagina) instead of turning them into separators; cut at a word boundary.
+    ascii_text = unicodedata.normalize('NFKD', description).encode('ascii', 'ignore').decode('ascii')
+    slug = re.sub(r'[^a-z0-9]+', '-', ascii_text.lower()).strip('-')
+    if len(slug) > BRANCH_SLUG_MAX:
+        cut = slug[:BRANCH_SLUG_MAX + 1]
+        slug = cut[:cut.rfind('-')] if '-' in cut else slug[:BRANCH_SLUG_MAX]
+    return slug.strip('-') or 'task'
+
+
 def branch_name(mode, description):
-    slug = re.sub(r'[^a-z0-9]+', '-', description.lower()).strip('-')[:50] or 'task'
+    slug = branch_slug(description)
     prefix = {'error': 'fix', 'feature': 'feature', 'optimize': 'optimize'}[mode]
     return f'{prefix}/{slug}-{uuid.uuid4().hex[:8]}'
 
@@ -120,8 +135,11 @@ def task_branch(repository, mode, description, base=None, allow_untracked=False)
     start = git(root, 'rev-parse', '--verify', (base + '^{commit}') if base else 'HEAD')
     branch = branch_name(mode, description)
     git(root, 'switch', '-c', branch, start)
+    # Large untracked sets (generated assets, vendored skills) would bloat the record and the worker brief:
+    # keep a sample and the count; helpers commit explicit paths, so none of them is ever committed.
     return inspect(root) | {'base_revision': start, 'previous_branch': info['branch'], 'isolated': False,
-                            'untracked_preserved': untracked}
+                            'untracked_preserved': sorted(untracked)[:UNTRACKED_LISTED],
+                            'untracked_preserved_count': len(untracked)}
 
 
 def prepare(repository, mode, description, worktree_root, base=None, existing_branch=None, _parent=None):
