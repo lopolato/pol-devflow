@@ -14,7 +14,7 @@ Lite exige además modo error o feature (optimize siempre es full y no admite `-
 
 ## Pasos del Coordinator
 
-1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. En lite+review, anotar las lentes de riesgo que toca (requirements, security, money, communications, data, concurrency, tests). No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
+1. Preflight breve: instrucciones del proyecto, `git status`, criterios y archivos previstos. Preguntar solo decisiones relevantes de producto. En lite+review, anotar las lentes de riesgo que toca (requirements, security, money, communications, data, concurrency, tests, simplicity). No leer [memoria del proyecto](../rules/project-memory.md); solo comprobar si está activada: existe `docs/devflow/`, las instrucciones del proyecto la piden o el usuario la solicita ahora.
 2. Crear la rama en la carpeta actual, sin worktree:
    `python scripts/devflow.py --repo PROJECT _lite start --mode error|feature --request DESCRIPTION [--request-file FILE] [--review] --executor EXECUTOR`
    El helper exige checkout limpio salvo untracked, nunca escribe en main/master y registra la rama para `cleanup`. `--request` es el título; `--request-file` guarda el mensaje literal del usuario (sin él se guarda `--request`). Devuelve `request_ref`, `untracked_preserved` (muestra de hasta 20 rutas) con `untracked_preserved_count`, `session_model_hint` e `identity`; si esta trae `warning`, resolver el autor según [Git](../rules/git-worktrees.md).

@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from devflow import cli
 
 COMMANDS = ('help', 'status', 'stats', 'config', 'cleanup', 'retro', 'rules', 'error', 'feature', 'optimize',
-            '_run', '_lite', '_git', '_metrics', '_profile', '_rules', '_retro', '_orca', '_workspace', '_validate',
+            '_run', '_lite', '_check', '_git', '_metrics', '_profile', '_rules', '_retro', '_orca', '_workspace', '_validate',
             '_capabilities', '_install', '_uninstall')
 # Global options of scripts/devflow.py, accepted before or after the subcommand.
 CONTEXT_FLAGS = ('--data-dir', '--repo', '--root')

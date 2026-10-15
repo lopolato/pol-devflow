@@ -23,7 +23,7 @@ LIST_FIELDS = ('criteria_results', 'findings', 'files_inspected', 'files_changed
 REQUEST_LIMIT = 64 * 1024
 REQUEST_CHANGED = 'Literal request changed after start; start a new run or restore it'
 # Review lenses: what the risk of this change needs checked, set once and passed to every worker.
-LENSES = ('requirements', 'security', 'money', 'communications', 'data', 'concurrency', 'tests')
+LENSES = ('requirements', 'security', 'money', 'communications', 'data', 'concurrency', 'tests', 'simplicity')
 SELF_REVIEW_STATUSES = ('ok', 'risk', 'not_applicable')
 PLAN_ROLES = ('implementer', 'fixer', 'tester', 'reviewer')
 NOTE_LIMIT = 200

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 import uuid
-from . import adapters, cleanup, config, gitops, lite, metrics, nesting, orca, package, profile, retro, rules, state
+from . import adapters, checks, cleanup, config, gitops, lite, metrics, nesting, orca, package, profile, retro, rules, state
 from .storage import DevFlowError, FileLock, atomic_write, data_home, digest, json_bytes, now, package_root, read_json, safe_id
 
 HELP = {
@@ -106,6 +106,13 @@ def parser():
     p.add_argument('action', choices=('show', 'set'))
     p.add_argument('--input')
     p.add_argument('--repo-file', action='store_true')
+    p = commands.add_parser('_check')
+    p.add_argument('action', choices=('run',))
+    p.add_argument('--workspace')
+    p.add_argument('--name')
+    p.add_argument('--run')
+    p.add_argument('--lite')
+    p.add_argument('--timeout', type=int, default=checks.DEFAULT_TIMEOUT)
     p = commands.add_parser('_metrics')
     p.add_argument('action', choices=('add', 'feature'))
     p.add_argument('--run')
@@ -850,6 +857,8 @@ def run_command(args, ctx):
 
 def dispatch(args, ctx):
     data, root = Path(ctx.data_dir), Path(ctx.root)
+    if getattr(args, 'checked_command', None) is not None and args.command != '_check':
+        raise DevFlowError('`-- COMMAND` only applies to _check run')
     if args.command == 'help':
         return HELP[args.topic]
     if args.command in state.MODES:
@@ -879,6 +888,15 @@ def dispatch(args, ctx):
             return profile.show(data, ctx.repo)
         require(args.input)
         return profile.save(data, ctx.repo, read_json(args.input), args.repo_file)
+    if args.command == '_check':
+        require(args.workspace, args.name)
+        if args.run and args.lite:
+            raise DevFlowError('Use at most one of --run or --lite')
+        if args.run and not (data / 'runs' / safe_id(args.run) / 'state.json').is_file():
+            raise DevFlowError('Unknown run')
+        if args.lite and not (data / 'lite' / (safe_id(args.lite) + '.json')).is_file():
+            raise DevFlowError('Unknown lite record')
+        return checks.run(data, args.workspace, args.checked_command, args.name, args.run, args.lite, args.timeout)
     if args.command == '_metrics':
         if bool(args.run) == bool(args.lite):
             raise DevFlowError('Use exactly one of --run or --lite')
@@ -1090,8 +1108,16 @@ def main(argv=None):
     context.add_argument('--data-dir', default=str(data_home()))
     context.add_argument('--repo', default=str(Path.cwd()))
     context.add_argument('--root', default=str(package_root()))
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # `_check run ... -- COMMAND`: the checked command is split off first, so its own flags
+    # (-q, --repo, ...) never reach DevFlow's parsers.
+    checked = None
+    if '--' in argv:
+        cut = argv.index('--')
+        argv, checked = argv[:cut], argv[cut + 1:]
     ctx, remaining = context.parse_known_args(argv)
     args = parser().parse_args(remaining)
+    args.checked_command = checked
     try:
         output = dispatch(args, ctx)
         if isinstance(output, str):

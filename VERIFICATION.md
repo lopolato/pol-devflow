@@ -1,4 +1,4 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.23)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.24)
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 
@@ -209,3 +209,12 @@ Ideas adaptadas de gentle-ai (MIT); análisis completo en docs/analisis-gentle-a
 - Error y feature: una incidencia o criterio visual se comprueba en un navegador si la sesión tiene uno; si no, se pide al usuario una comprobación concreta antes de cerrar.
 - Origen: análisis de dos ejecuciones reales del 15/10/2026 (una lite y una full con refutación corroborada y re-revisión acotada).
 - Pruebas: test_lite_finish.py (8) y una nueva en test_timing.py.
+
+## 1.0.24 · Salidas acotadas, cambio mínimo y aclaración guiada · 15/10/2026
+
+- `_check run --workspace W --name NOMBRE [--run ID|--lite ID] [--timeout SECONDS] -- COMANDO ARGS`: ejecuta sin shell (en Windows resuelve lanzadores `.cmd` por PATH), guarda la salida completa con cabecera y hash en `runs/ID/checks/`, `lite/ID.checks/` o `checks/` y devuelve estado (`passed`, `failed`, `timeout`), código, duración, hasta 20 líneas de fallo y las 30 últimas (3 si pasa). El comando tras `--` se separa antes de analizar los argumentos de DevFlow; `--` en cualquier otro comando se rechaza.
+- Contrato de worker: tests, lint, typecheck y build con `_check run`, buscando en el log en lugar de repetir; los roles que escriben código siguen una escalera de cambio mínimo (¿hace falta?, ¿ya existe?, librería estándar, función nativa, dependencia instalada, una línea, lo mínimo) sin recortar validación en fronteras de confianza, pérdida de datos, seguridad ni accesibilidad, y declaran en `risks` los atajos con límite conocido.
+- Lente `simplicity` en `review_plan`: el reviewer devuelve qué sobra solo como `suggestion`, nunca como blocker, para no alargar el ciclo de corrección.
+- Aclaración: con decisiones de producto abiertas, una pregunta cada vez, con respuesta recomendada y motivo, hasta cerrar las que cambian criterios o comportamiento visible.
+- Origen: ideas de Ponytail (escalera y atajos anotados), Context Mode (salidas fuera del contexto) y `grill-me` de Matt Pocock; ver docs/analisis-ideas-externas.md. Se toman ideas, no texto ni código.
+- Pruebas: test_checks.py (6); `_check` añadido a los comandos de test_docs_consistency.
