@@ -2,6 +2,8 @@
 
 ## 1.0.25
 
+La primera matriz CI detectó una llamada directa a `run_command` sin el nuevo atributo opcional `compact`. El test previo de validación de reviewer reprodujo el error localmente; se conserva la compatibilidad tratando su ausencia como `False`, sin modificar el test ni omitir controles.
+
 Mejoras derivadas de una ejecución real: respuesta compacta optativa para mutaciones de estado, contadores explícitos de encargos/identidades y tokens sin datos, petición literal desde el inicio, contexto de delegación acotado, riesgos del análisis trasladados a comprobaciones y verificación temprana de UI compartida. Se conservan la autorización de correcciones posteriores, los guards de Git/identidad/scopes, la revisión independiente y la refutación.
 
 Las regresiones de `tests/test_compact_output.py` usan repositorios temporales y el CLI real: comprueban petición literal multilínea, contexto/identidad del arranque, menor respuesta con resultados completos en disco, warnings conservados, reutilización de identidad, cero reportado frente a datos ausentes y rechazo sin mutación de propietario incorrecto o de compactar un encargo. Las instrucciones de UI se contrastan con un caso de evaluación independiente; no se ejecutan sesiones Claude de pago como parte de la suite.

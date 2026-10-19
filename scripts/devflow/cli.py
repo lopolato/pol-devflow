@@ -376,7 +376,7 @@ def abandon(data, args):
 
 def run_command(args, ctx):
     data, root, repo = Path(ctx.data_dir), Path(ctx.root), Path(ctx.repo)
-    if args.compact and args.action not in ('start', 'refresh', 'record', 'update', 'attempt', 'resolve',
+    if getattr(args, 'compact', False) and args.action not in ('start', 'refresh', 'record', 'update', 'attempt', 'resolve',
                                            'close', 'claim', 'abandon', 'checkpoint'):
         raise DevFlowError('--compact only applies to state-returning mutations and checkpoint; task needs its full handoff')
     if args.dry_run and args.action != 'record':
