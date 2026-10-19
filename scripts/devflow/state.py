@@ -391,17 +391,22 @@ def raise_budget(run, value):
 
 
 def budget_summary(run):
-    """Workers and known tokens against the run budget; tokens are partial data, so never a blocker."""
+    """Assignments and reported usage; identities are declarations, not authenticated agents."""
     budget = run.get('budget') or {}
     used = len(run.get('tasks', []))
     tokens = sum(m['tokens'] for m in run.get('metrics', []) if isinstance(m.get('tokens'), int))
+    tokens_reported = any(isinstance(m.get('tokens'), int) for m in run.get('metrics', []))
+    identities = {t['result']['worker_id'] for t in run.get('tasks', [])
+                  if isinstance(t.get('result'), dict) and t['result'].get('worker_id')}
     exceeded = []
     if budget.get('max_workers') is not None and used > budget['max_workers']:
         exceeded.append('max_workers')
     if budget.get('max_tokens') is not None and tokens > budget['max_tokens']:
         exceeded.append('max_tokens')
     return {'max_workers': budget.get('max_workers'), 'workers_used': used, 'max_tokens': budget.get('max_tokens'),
-            'tokens_known': tokens, 'exceeded': exceeded}
+            'tokens_known': tokens, 'exceeded': exceeded, 'assignments_used': used,
+            'worker_identities_known': len(identities),
+            'tokens_status': 'reported' if tokens_reported else 'unavailable'}
 
 
 def budget_warnings(run):
@@ -470,7 +475,7 @@ def brief(run):
                         'refutations': sum(1 for t in tasks if t.get('refute') and t.get('result') is not None),
                         'changes_required': changes_required_reviews(run),
                         'fixers': sum(1 for t in tasks if t.get('role') == 'fixer')},
-             'budget': {k: budget[k] for k in ('workers_used', 'max_workers', 'tokens_known', 'max_tokens', 'exceeded')},
+             'budget': budget,
              'request_ref': (run.get('request_ref') or {}).get('path')}
     for key, items in (('open_tasks', open_tasks), ('open_blockers', blockers)):
         if len(items) > BRIEF_LIST_LIMIT:

@@ -12,6 +12,8 @@
 
 **Aceptación:** evidencia suficiente para evaluar criterios. Si añade o modifica tests, estos cambios se incluyen en un checkpoint y en la revisión final pertinente.
 
+En UI, comprobar la página que usa realmente el usuario y sus scripts; incluir los contextos anteriores afectados por reutilización. En un harness aislado, verificar configuración, caché de plantillas y sustitutos de servicios antes de atribuir un fallo al producto. Distinguir defectos nuevos de limitaciones previas mediante una comparación equivalente; conservar ambos resultados y no ocultar fallos fuera de alcance.
+
 ## Documentación y memoria
 
 Aporta comandos, resultados y revisión comprobada para el resultado final y el informe si existe. Señala instrucciones de ejecución/pruebas desactualizadas; un comando encontrado pero no ejecutado no está verificado.

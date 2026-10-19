@@ -51,6 +51,8 @@ Incluir también extractos de [contexto técnico](technical-context.md) pertinen
 
 El contexto relevante enlaza archivos, símbolos, evidencias y resultados previos identificados. No enviar toda la conversación ni todo el repositorio por defecto. El worker puede leer material adicional necesario dentro del alcance.
 
+El encargo debe ser autocontenido: petición literal por referencia, decisiones vigentes, scope, revisión, riesgos que debe verificar y comandos contrastados. Preferir un worker sin historial heredado cuando el runtime lo permita; heredar la conversación solo si existe una necesidad concreta. No duplicar aquí todos los documentos de la skill. `review.coverage` es un texto no vacío que nombra las lentes, no un array; validar el resultado antes de registrarlo.
+
 Coordinator añade el worker_id estable y conserva su asociación con la sesión nativa; si esta no expone un id al worker, se entrega la identidad asignada en el encargo. El helper valida etiquetas declaradas, no autentica la sesión. El Coordinator nunca acredita revisión independiente, incluso si implementó directamente sin handoff.
 
 Al recibir, el worker comprueba que rutas y revisión coinciden. Si falta información material o encuentra una versión inesperada, informa antes del trabajo dependiente. La comprobación de recepción no requiere una ronda de mensajes ceremonial cuando todo es correcto.

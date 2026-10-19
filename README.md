@@ -1,4 +1,6 @@
-# Pol DevFlow 1.0.24
+# Pol DevFlow 1.0.25
+
+La 1.0.25 reduce el contexto de coordinación: `--compact` resume las mutaciones de estado sin perder evidencia ni controles, los encargos usan referencias y contexto acotado, y los riesgos del análisis se convierten en comprobaciones. En UI se verifica pronto el recorrido con assets reales y se conserva el comportamiento del contexto original. Presupuestos y estado distinguen encargos, identidades reportadas y tokens sin datos; no se promete ahorro de tokens sin medición.
 
 La 1.0.21 recorta el ciclo revisión → corrección → nueva revisión: el Reviewer solo informa defectos reales con evidencia (un falso positivo cuesta un ciclo completo), otro Reviewer intenta refutar cada blocker antes de corregir (`_run task --role reviewer --refute-from REVIEW_TASK_ID`: `corroborated`, `refuted` o `inconclusive`), el fixer solo corrige los corroborados, la re-revisión con `--review-from` comprueba solo esos blockers en los archivos corregidos y una segunda corrección exige tu decisión (`--user-approved`). Tras una compactación del contexto, `status --brief` recupera el estado en unas 40 líneas. Ideas adaptadas de gentle-ai: ver [análisis](docs/analisis-gentle-ai.md).
 
@@ -38,6 +40,7 @@ Skill portable para Codex y Claude Code que orquesta `error`, `feature` y `optim
 - `retro [--since DAYS] [--category C]`: resumen de las autoevaluaciones de proceso que el Coordinator guarda al cerrar a partir del `retro_draft` de `check-close`.
 - `rules [--path P ...]`: reglas del proyecto (must_not, requirement, convention) y las que afectan a unas rutas. Tras corregir un bug se propone una `must_not` ligada a su test de regresión (inferida hasta que la confirmes); llegan solas en cada encargo (`rules`) y las comprueba el Reviewer. Se guardan fuera del repositorio salvo `--repo-file` (`.devflow/rules.json`). Reglas y retro son optativas y nunca bloquean.
 - Presupuesto en full: `--max-workers N` / `--max-tokens N` al iniciar. Superar workers se rechaza hasta que apruebes subirlo; superar tokens solo se avisa.
+- `workers_used` conserva su significado histórico de número de encargos y tiene el alias explícito `assignments_used`. `worker_identities_known` cuenta IDs distintos reportados (incluye al Coordinator si ejecutó un rol, no autentica agentes). `tokens_status=unavailable` significa que `tokens_known=0` no acredita consumo cero; `reported` indica que existe alguna cifra, no que la medición sea completa.
 - `cleanup [--apply] [--remote R] [--discard RAMA] [--purge-history]`: ver [Limpieza](#limpieza).
 
 ## Perfil, codegraph y Context7
@@ -89,6 +92,7 @@ MIT. Ver [LICENSE](LICENSE).
 
 ## Historial
 
+- 1.0.25: `--compact` en mutaciones de `_run`, con estado completo en disco y los mismos guards; métricas sin confundir encargos con identidades ni tokens desconocidos con cero; contexto acotado, petición literal desde el inicio, riesgos heredados verificables y comprobación temprana de UI con sus consumidores reales.
 - 1.0.24: `_check run` deja la salida completa de tests y builds en disco y devuelve solo el resumen; escalera de cambio mínimo y atajos con su límite en `risks` para los workers que escriben código; lente `simplicity` (sobreingeniería, solo sugerencias); aclaración pregunta a pregunta con respuesta recomendada. Ideas de Ponytail, Context Mode y las skills de Matt Pocock ([análisis](docs/analisis-ideas-externas.md)).
 - 1.0.23: `_lite finish` cierra cada lite (completed, partial o cancelled; `--revision` si la rama ya se mezcló), nombres de rama legibles (sin acentos rotos, máximo 40 caracteres), muestra acotada de archivos sin seguimiento, tiempo observado por rol en `stats` y comprobación visual en navegador o pedida al usuario antes de cerrar.
 - 1.0.22: entorno virtual del proyecto en `context.python` (aviso si usa el Python de la Store) y `release.py` que reintenta cortes de conexión sin saltarse nunca la comprobación de la CI.

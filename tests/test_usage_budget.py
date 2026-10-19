@@ -244,7 +244,8 @@ class UsageBudgetTests(unittest.TestCase):
         self.cli('_metrics', 'add', '--run', run['run_id'], '--owner', 'co', '--role', 'explorer')
         shown = self.run_cli('show', run)['budget']
         self.assertEqual(shown, {'max_workers': None, 'workers_used': 0, 'max_tokens': 1000, 'tokens_known': 700,
-                                 'exceeded': []})
+                                 'exceeded': [], 'assignments_used': 0, 'worker_identities_known': 0,
+                                 'tokens_status': 'reported'})
         self.cli('_metrics', 'add', '--run', run['run_id'], '--owner', 'co', '--role', 'coordinator', '--tokens', '800')
         self.assertEqual(self.run_cli('show', run)['budget']['exceeded'], ['max_tokens'])
         status = self.cli('status', '--run', run['run_id'])['budget']

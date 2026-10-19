@@ -1,4 +1,14 @@
-# Comprobación de Pol DevFlow (historial 1.0.5–1.0.24)
+# Comprobación de Pol DevFlow (historial 1.0.5–1.0.25)
+
+## 1.0.25
+
+Mejoras derivadas de una ejecución real: respuesta compacta optativa para mutaciones de estado, contadores explícitos de encargos/identidades y tokens sin datos, petición literal desde el inicio, contexto de delegación acotado, riesgos del análisis trasladados a comprobaciones y verificación temprana de UI compartida. Se conservan la autorización de correcciones posteriores, los guards de Git/identidad/scopes, la revisión independiente y la refutación.
+
+Las regresiones de `tests/test_compact_output.py` usan repositorios temporales y el CLI real: comprueban petición literal multilínea, contexto/identidad del arranque, menor respuesta con resultados completos en disco, warnings conservados, reutilización de identidad, cero reportado frente a datos ausentes y rechazo sin mutación de propietario incorrecto o de compactar un encargo. Las instrucciones de UI se contrastan con un caso de evaluación independiente; no se ejecutan sesiones Claude de pago como parte de la suite.
+
+Pruebas dirigidas locales: 12 casos de CLI/status/salida compacta y 23 de presupuestos, petición literal y coherencia de comandos aprobados; 8 casos adicionales de protocolo de resultados y ciclo de vida aprobados. `scripts/validate.py` devuelve healthy y `quick_validate.py` de skill-creator acepta la skill. Se mantiene la política del repositorio: suite completa en la matriz CI de Windows/Linux y Python 3.11/3.12.
+
+Evaluación independiente de lectura sobre seis artefactos sintéticos: identificó redefinición global, orden de carga de scripts, estado/navegación compartidos y contrato de importación todavía desconocido. Propuso trasladarlos a comprobaciones, una entrega vertical y navegador antes de la primera review, con roles acotados y `fork_turns="none"`; no escribió producto ni creó un run. Esa evaluación valida decisiones del plan, no demuestra ejecución de una feature ni mide tokens. El cambio reduce el volumen de respuestas de estado por construcción; no cuantifica ahorro de tokens de modelos ni promete una duración para tareas futuras.
 
 Actualización del 5 de octubre de 2026: adaptador local Orca Build, Context7 selectivo y lite proporcional. Engram queda fuera.
 

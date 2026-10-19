@@ -189,6 +189,7 @@ def parser():
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--brief', action='store_true')
     p.add_argument('--author-name')
+    p.add_argument('--compact', action='store_true', help='Summarize state-returning mutations without printing task history')
     p.add_argument('--author-email')
     p.add_argument('--max-workers', type=int)
     p.add_argument('--max-tokens', type=int)
@@ -375,6 +376,9 @@ def abandon(data, args):
 
 def run_command(args, ctx):
     data, root, repo = Path(ctx.data_dir), Path(ctx.root), Path(ctx.repo)
+    if args.compact and args.action not in ('start', 'refresh', 'record', 'update', 'attempt', 'resolve',
+                                           'close', 'claim', 'abandon', 'checkpoint'):
+        raise DevFlowError('--compact only applies to state-returning mutations and checkpoint; task needs its full handoff')
     if args.dry_run and args.action != 'record':
         raise DevFlowError('--dry-run only applies to record')
     if args.budget_minutes is not None and args.action != 'task':
@@ -1120,6 +1124,15 @@ def main(argv=None):
     args.checked_command = checked
     try:
         output = dispatch(args, ctx)
+        if args.command == '_run' and args.compact and isinstance(output, dict) and 'tasks' in output:
+            # Projection only: dispatch already ran every normal guard and saved the complete state.
+            value = state.brief(output)
+            value.update(current_revision=output.get('current_revision'), request_ref=output.get('request_ref'),
+                         state_path=str(state.run_dir(Path(ctx.data_dir).resolve(), output['run_id']) / 'state.json'))
+            for key in ('identity', 'context', 'warnings', 'budget_warnings', 'review'):
+                if key in output:
+                    value[key] = output[key]
+            output = compact_json(value)
         if isinstance(output, str):
             print(output)
         else:

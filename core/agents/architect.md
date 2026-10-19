@@ -10,6 +10,8 @@
 
 **Entrega al Coordinator:** plan ejecutable con tareas, entradas/salidas, zonas de escritura, contratos y criterios por tarea; `code_map` si el siguiente worker lo necesita.
 
+Para cada riesgo específico encontrado, indicar el desencadenante y la comprobación que demostraría su resolución. Coordinator debe trasladarlos al siguiente encargo; no crear una lista de riesgos genéricos ni prescribir pruebas de áreas ajenas.
+
 **Aceptación:** el plan permite encargar trabajo sin inventar interfaces compartidas. Ambigüedades materiales identificadas y resueltas antes del trabajo dependiente.
 
 ## Documentación y memoria

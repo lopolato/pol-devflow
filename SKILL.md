@@ -5,7 +5,7 @@ description: Orquestación de desarrollo para error, feature y optimize (con mod
 
 # Pol DevFlow
 
-La sesión actual es el Coordinator. Ejecuta el workflow solicitado y elige los roles necesarios. Preferir delegación nativa comprobada del runtime actual, también dentro de Orca. La gestión de un workspace Orca no determina cómo se ejecutan los workers; una petición explícita de ejecución Orca sí se respeta. Los helpers Python gestionan evidencia, configuración y Git.
+La sesión actual es el Coordinator. Ejecuta el workflow solicitado con el mínimo de roles y encargos útiles. Preferir delegación nativa comprobada del runtime actual, también dentro de Orca. La gestión de un workspace Orca no determina cómo se ejecutan los workers; una petición explícita de ejecución Orca sí se respeta. Los helpers Python gestionan evidencia, configuración y Git.
 
 ## Enrutar la invocación
 
@@ -30,6 +30,7 @@ Aceptar `error|feature [--lite|--full] [--review] [--plan-only] <descripción>`,
 - Preguntar por decisiones relevantes de producto, arquitectura o propiedad; inspeccionar código para resolver detalles técnicos.
 - Los roles son responsabilidades; usar el recorrido mínimo. Native y Orca permiten olas independientes de lectura en una misma revisión limpia; un writer espera a que no quede tarea pendiente y no se solapa con lectores. Solo lectores con un grant registrado pueden subdelegar según core/rules/subdelegation.md; las hojas no redelegan.
 - Los encargos identifican propietario, alcance, dependencias y revisión candidata. Todas las respuestas vuelven al Coordinator.
+- Pasar la petición literal por `--request-file` si `--request` es solo un título; delegar con contexto acotado y referencias, no con el historial completo por defecto. Los riesgos concretos detectados se convierten en comprobaciones del siguiente encargo.
 - Preparar el entorno del workspace según [Git](core/rules/git-worktrees.md) antes de asignar cambios o tests.
 - Comprobar la identidad Git antes del primer commit; no reescribir commits revisados. Confirmar únicamente rutas propias en la rama de tarea; preservar cambios preexistentes y trabajo pendiente. Push, despliegue y merge a main/master requieren una petición que los incluya.
 - Mantener comprobaciones obligatorias y hallazgos. Resolver blockers mediante evidencia y validación de la revisión actual.
