@@ -54,6 +54,8 @@ Registrar workers con identidad, task_id, rol y estado. Para declarar cancelaci√
 
 Usar `--compact` en las mutaciones de `_run` que devuelven estado (`start`, `update`, `record`, `refresh`, `attempt`, `resolve`, `close`, `claim`, `abandon` y `checkpoint`): conserva controles y evidencia completa en `state_path`, y evita imprimir de nuevo todo el historial. No se aplica a `task`, cuyo encargo completo necesita el worker. `--brief` en `record` sigue siendo el formato de entrada breve, compatible con `--compact`; para consultas usar `status --brief`.
 
+`checkpoint --compact` conserva su respuesta breve preexistente, sin `state_path`.
+
 ## Asignar tareas y recibir resultados
 
 Consultar [handoff](rules/handoff.md), [subdelegaci√≥n](rules/subdelegation.md) y el rol en core/agents.

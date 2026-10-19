@@ -18,6 +18,8 @@ Las mutaciones de `_run` (`start`, `update`, `record`, `refresh`, `attempt`, `re
 
 En presupuestos, `assignments_used` es el número de encargos (alias compatible de `workers_used`); `worker_identities_known` cuenta IDs distintos reportados, incluido Coordinator si ejecutó un rol. No prueba cuántos procesos nativos existieron. `tokens_status=unavailable` distingue ausencia de datos de un cero reportado; `reported` solo acredita que existe alguna cifra y no una medición completa.
 
+`checkpoint --compact` conserva su respuesta breve preexistente, sin `state_path`.
+
 ## stats
 
 `_check run --workspace W --name NOMBRE [--run ID|--lite ID] [--timeout SECONDS] -- COMANDO ARGS` ejecuta una comprobación sin shell, guarda la salida completa en la carpeta del run o del registro lite (o en `checks/`) y devuelve solo estado, código de salida, duración, líneas de fallo y final. El comando tras `--` se pasa tal cual: sus opciones nunca las interpreta DevFlow.
